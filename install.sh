@@ -12,6 +12,24 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+if [[ ! -r /etc/os-release ]]; then
+  echo "This installer requires a supported Ubuntu release."
+  exit 1
+fi
+
+# shellcheck disable=SC1091
+source /etc/os-release
+if [[ "${ID:-}" != "ubuntu" ]]; then
+  echo "DDK VPS Manager currently supports Ubuntu Server 20.04 or newer."
+  exit 1
+fi
+
+UBUNTU_MAJOR="${VERSION_ID%%.*}"
+if [[ ! "$UBUNTU_MAJOR" =~ ^[0-9]+$ ]] || (( UBUNTU_MAJOR < 20 )); then
+  echo "Ubuntu ${VERSION_ID:-unknown} is not supported. Use Ubuntu 20.04 or newer."
+  exit 1
+fi
+
 if ! command -v systemctl >/dev/null 2>&1; then
   echo "This release requires a Linux system with systemd."
   exit 1
@@ -63,6 +81,7 @@ install -d -m 700 "$APP_DIR" "$APP_DIR/data" "$APP_DIR/logs"
 install -m 700 "$SOURCE_DIR/src/app.py" "$APP_DIR/app.py"
 install -m 700 "$SOURCE_DIR/menu.sh" "$APP_DIR/menu.sh"
 install -m 700 "$SOURCE_DIR/uninstall.sh" "$APP_DIR/uninstall.sh"
+install -m 700 "$SOURCE_DIR/setup-ssl.sh" "$APP_DIR/setup-ssl.sh"
 install -m 644 "$SOURCE_DIR/systemd/ddk-vps-manager.service" "$SERVICE_FILE"
 ln -sfn "$APP_DIR/menu.sh" "$MENU_FILE"
 
@@ -77,6 +96,7 @@ systemctl enable --now "$SERVICE_NAME"
 
 echo
 echo "${APP_NAME} installed successfully."
+echo "Supported Ubuntu detected: ${VERSION_ID}"
 echo "Panel URL: http://${PANEL_DOMAIN}:${PANEL_PORT}"
 echo "Username: ${ADMIN_USER}"
 echo "Password: ${ADMIN_PASSWORD}"

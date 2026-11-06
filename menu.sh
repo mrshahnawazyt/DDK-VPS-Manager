@@ -34,10 +34,11 @@ while true; do
   echo "3) Stop panel"
   echo "4) Restart panel"
   echo "5) View panel logs"
-  echo "6) Python proxy service: status"
-  echo "7) Python proxy service: start"
-  echo "8) Python proxy service: stop"
-  echo "9) Uninstall DDK VPS Manager completely"
+  echo "6) Set up HTTPS (Nginx + Let's Encrypt)"
+  echo "7) Python proxy service: status"
+  echo "8) Python proxy service: start"
+  echo "9) Python proxy service: stop"
+  echo "10) Uninstall DDK VPS Manager completely"
   echo "0) Exit"
   echo
   read -r -p "Choose an option: " choice
@@ -47,10 +48,11 @@ while true; do
     3) systemctl stop "$SERVICE"; echo "Panel stopped."; pause ;;
     4) systemctl restart "$SERVICE"; echo "Panel restarted."; pause ;;
     5) journalctl -u "$SERVICE" -n 100 --no-pager; pause ;;
-    6) python_service status || true; pause ;;
-    7) python_service start; pause ;;
-    8) python_service stop; pause ;;
-    9) exec "$APP_DIR/uninstall.sh" ;;
+    6) "$APP_DIR/setup-ssl.sh"; pause ;;
+    7) python_service status || true; pause ;;
+    8) python_service start; pause ;;
+    9) python_service stop; pause ;;
+    10) exec "$APP_DIR/uninstall.sh" ;;
     0) exit 0 ;;
     *) echo "Invalid option."; pause ;;
   esac

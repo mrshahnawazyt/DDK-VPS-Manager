@@ -19,6 +19,7 @@ import time
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs, quote, urlparse
 
 APP_HOME = Path(os.environ.get("DDK_VPS_MANAGER_HOME", "/opt/ddk-vps-manager"))
@@ -32,7 +33,7 @@ SERVICE_CATALOG = (
     ("haproxy", "HAProxy", "Optional load balancer"),
     ("ddk-vps-manager-python-proxy", "Python Proxy", "Optional separately-installed Python service"),
 )
-SESSIONS: dict[str, dict] = {}
+SESSIONS: Dict[str, Dict[str, Any]] = {}
 
 
 def connection() -> sqlite3.Connection:
@@ -85,7 +86,7 @@ def set_setting(key: str, value: str) -> None:
         )
 
 
-def password_record(password: str, salt: bytes | None = None) -> tuple[str, str]:
+def password_record(password: str, salt: Optional[bytes] = None) -> Tuple[str, str]:
     raw_salt = salt or secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), raw_salt, 310_000)
     return base64.b64encode(raw_salt).decode(), base64.b64encode(digest).decode()
@@ -132,7 +133,7 @@ def initialize(admin_user: str, admin_password: str, domain: str, port: str) -> 
     return 0
 
 
-def command(args: list[str], timeout: int = 5) -> tuple[int, str]:
+def command(args: List[str], timeout: int = 5) -> Tuple[int, str]:
     try:
         completed = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    timeout=timeout, check=False)
@@ -154,8 +155,8 @@ def service_state(unit: str) -> str:
     return output or "unknown"
 
 
-def system_snapshot() -> dict[str, str | int]:
-    meminfo: dict[str, int] = {}
+def system_snapshot() -> Dict[str, Union[str, int]]:
+    meminfo: Dict[str, int] = {}
     try:
         for line in Path("/proc/meminfo").read_text().splitlines():
             key, rest = line.split(":", 1)
@@ -198,11 +199,11 @@ def human_bytes(value: int) -> str:
     return "—"
 
 
-def listening_ports() -> list[tuple[str, str]]:
+def listening_ports() -> List[Tuple[str, str]]:
     rc, output = command(["ss", "-ltnH"], timeout=4)
     if rc != 0:
         return []
-    rows: list[tuple[str, str]] = []
+    rows: List[Tuple[str, str]] = []
     for line in output.splitlines()[:60]:
         parts = line.split()
         if len(parts) >= 4:
@@ -233,12 +234,12 @@ class PanelHandler(BaseHTTPRequestHandler):
     def request_path(self) -> str:
         return urlparse(self.path).path
 
-    def form(self) -> dict[str, str]:
+    def form(self) -> Dict[str, str]:
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(min(length, 16_384)).decode("utf-8", "replace")
         return {key: values[0] for key, values in parse_qs(raw).items()}
 
-    def session(self) -> tuple[str | None, dict | None]:
+    def session(self) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
         raw = self.headers.get("Cookie", "")
         jar = cookies.SimpleCookie()
         try:
@@ -254,7 +255,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             return None, None
         return token.value, session
 
-    def current_user(self) -> dict | None:
+    def current_user(self) -> Optional[Dict[str, Any]]:
         _, session = self.session()
         if not session:
             return None
@@ -265,7 +266,7 @@ class PanelHandler(BaseHTTPRequestHandler):
     def set_cookie(self, token: str, expires: int) -> None:
         self.send_header("Set-Cookie", f"{SESSION_COOKIE}={token}; Max-Age={expires}; Path=/; HttpOnly; SameSite=Lax")
 
-    def redirect(self, location: str, cookie: tuple[str, int] | None = None) -> None:
+    def redirect(self, location: str, cookie: Optional[Tuple[str, int]] = None) -> None:
         self.send_response(303)
         if cookie:
             self.set_cookie(*cookie)
@@ -286,16 +287,16 @@ class PanelHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def csrf(self, user: dict) -> str:
+    def csrf(self, user: Dict[str, Any]) -> str:
         token, session = self.session()
         if not token or not session:
             return ""
         return session["csrf"]
 
-    def valid_csrf(self, form: dict[str, str], user: dict) -> bool:
+    def valid_csrf(self, form: Dict[str, str], user: Dict[str, Any]) -> bool:
         return bool(user) and hmac.compare_digest(form.get("csrf", ""), self.csrf(user))
 
-    def page(self, title: str, content: str, user: dict | None = None, active: str = "") -> str:
+    def page(self, title: str, content: str, user: Optional[Dict[str, Any]] = None, active: str = "") -> str:
         if not user:
             return f"<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>{esc(title)}</title><style>{CSS}</style></head><body>{content}</body></html>"
         links = (("dashboard", "Dashboard", "/"), ("services", "Running services", "/services"),
@@ -309,13 +310,13 @@ class PanelHandler(BaseHTTPRequestHandler):
         text = parse_qs(urlparse(self.path).query).get("notice", [""])[0]
         return f"<div class='notice'>{esc(text)}</div>" if text else ""
 
-    def require_user(self) -> dict | None:
+    def require_user(self) -> Optional[Dict[str, Any]]:
         user = self.current_user()
         if not user:
             self.redirect("/login")
         return user
 
-    def require_super_admin(self, user: dict) -> bool:
+    def require_super_admin(self, user: Dict[str, Any]) -> bool:
         if user["role"] != "super_admin":
             self.redirect("/?notice=" + quote("This action requires a super administrator."))
             return False
@@ -375,7 +376,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         body = f"""<main class='login'><section class='login-box'><h1>DDK VPS MANAGER</h1><p>Sign in to manage this server.</p>{alert}<form method='post' action='/login'><label>Username<input name='username' autocomplete='username' required maxlength='32'></label><label>Password<input name='password' type='password' autocomplete='current-password' required></label><button class='button' style='width:100%;margin-top:18px'>Sign in</button></form><p class='small'>This panel is for a server you own or administer.</p></section></main>"""
         self.send_html(self.page("Sign in", body))
 
-    def login(self, form: dict[str, str]) -> None:
+    def login(self, form: Dict[str, str]) -> None:
         username = form.get("username", "")[:32]
         password = form.get("password", "")
         with connection() as db:
@@ -388,7 +389,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         audit(row["username"], "login", "Signed in to panel", self.client_address[0])
         self.redirect("/", (token, SESSION_TTL_SECONDS))
 
-    def dashboard(self, user: dict) -> None:
+    def dashboard(self, user: Dict[str, Any]) -> None:
         info = system_snapshot()
         states = [service_state(unit) for unit, _, _ in SERVICE_CATALOG]
         running = sum(1 for state in states if state == "running")
@@ -404,7 +405,7 @@ class PanelHandler(BaseHTTPRequestHandler):
 <article class='card' style='margin-top:15px'><h2>Services</h2><div class='table-wrap'><table class='table'><thead><tr><th>Service</th><th>Status</th><th>Purpose</th></tr></thead><tbody>{service_rows}</tbody></table></div></article>"""
         self.send_html(self.page("Dashboard", content, user, "dashboard"))
 
-    def services_page(self, user: dict) -> None:
+    def services_page(self, user: Dict[str, Any]) -> None:
         csrf = self.csrf(user)
         can_manage = user["role"] == "super_admin"
         rows = []
@@ -431,7 +432,7 @@ class PanelHandler(BaseHTTPRequestHandler):
 <article class='card' style='margin-top:15px'><h2>Listening TCP ports</h2><div class='table-wrap'><table class='table'><thead><tr><th>Address</th><th>Type</th></tr></thead><tbody>{port_rows}</tbody></table></div></article>"""
         self.send_html(self.page("Running services", content, user, "services"))
 
-    def service_action(self, user: dict, form: dict[str, str]) -> None:
+    def service_action(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
         if not self.require_super_admin(user):
             return
         unit = form.get("unit", "")
@@ -445,14 +446,14 @@ class PanelHandler(BaseHTTPRequestHandler):
         audit(user["username"], f"service_{action}", f"{unit}: {result}", self.client_address[0])
         self.redirect("/services?notice=" + quote(f"{unit}: {action} {result}"))
 
-    def settings_page(self, user: dict) -> None:
+    def settings_page(self, user: Dict[str, Any]) -> None:
         csrf = self.csrf(user)
         disabled = "" if user["role"] == "super_admin" else "disabled"
         content = f"""{self.notice()}<div class='title-row'><div><h1>Settings</h1><div class='muted'>Panel address settings. Restart the panel after changing the port.</div></div></div>
 <div class='grid two'><article class='card'><h2>Panel address</h2><form method='post' action='/settings'><input type='hidden' name='csrf' value='{csrf}'><div class='form-grid'><label>Domain or VPS IP<input name='domain' value='{esc(get_setting('domain'))}' maxlength='253' required {disabled}></label><label>Panel port<input name='port' value='{esc(get_setting('port','9090'))}' inputmode='numeric' required {disabled}></label></div><div class='button-row' style='margin-top:16px'><button class='button' {disabled}>Save settings</button></div></form><p class='muted'>The panel does not create DNS records. Point your domain to your VPS before using it.</p></article><article class='card'><h2>HTTPS checklist</h2><p class='muted'>For a public server, put this panel behind a trusted HTTPS reverse proxy, use a firewall allow-list, and keep a unique administrator password.</p><p class='muted'>Current panel process: <span class='pill'>ddk-vps-manager.service</span></p></article></div>"""
         self.send_html(self.page("Settings", content, user, "settings"))
 
-    def save_settings(self, user: dict, form: dict[str, str]) -> None:
+    def save_settings(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
         if not self.require_super_admin(user):
             return
         domain = form.get("domain", "").strip()
@@ -468,7 +469,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         audit(user["username"], "settings_update", f"Panel address changed to {domain}:{port}", self.client_address[0])
         self.redirect("/settings?notice=" + quote("Saved. Restart DDK VPS Manager from the VPS menu to use a new port."))
 
-    def save_python_proxy_port(self, user: dict, form: dict[str, str]) -> None:
+    def save_python_proxy_port(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
         if not self.require_super_admin(user):
             return
         port = form.get("port", "").strip()
@@ -488,7 +489,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         audit(user["username"], "python_proxy_port", f"Python proxy port set to {port}", self.client_address[0])
         self.redirect("/services?notice=" + quote(f"Python proxy port {outcome}."))
 
-    def admins_page(self, user: dict) -> None:
+    def admins_page(self, user: Dict[str, Any]) -> None:
         with connection() as db:
             users = db.execute("SELECT username, role, created_at FROM users ORDER BY id").fetchall()
         rows = "".join(f"<tr><td><b>{esc(row['username'])}</b></td><td><span class='pill'>{esc(row['role'])}</span></td><td>{esc(fmt_time(row['created_at']))}</td></tr>" for row in users)
@@ -500,7 +501,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         content = f"""{self.notice()}<div class='title-row'><div><h1>Panel admins</h1><div class='muted'>Access is stored on this VPS only.</div></div></div><div class='grid two'>{create_card}<article class='card'><h2>Existing logins</h2><div class='table-wrap'><table class='table'><thead><tr><th>Username</th><th>Role</th><th>Created</th></tr></thead><tbody>{rows}</tbody></table></div></article></div>"""
         self.send_html(self.page("Panel admins", content, user, "admins"))
 
-    def admin_create(self, user: dict, form: dict[str, str]) -> None:
+    def admin_create(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
         if not self.require_super_admin(user):
             return
         username = form.get("username", "").strip()
@@ -520,7 +521,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         audit(user["username"], "admin_create", f"Created {role} login {username}", self.client_address[0])
         self.redirect("/admins?notice=" + quote(f"Created login for {username}."))
 
-    def activity_page(self, user: dict) -> None:
+    def activity_page(self, user: Dict[str, Any]) -> None:
         with connection() as db:
             rows = db.execute("SELECT created_at, username, action, detail, remote_addr FROM audit_log ORDER BY id DESC LIMIT 100").fetchall()
         table = "".join(f"<tr><td>{esc(fmt_time(row['created_at']))}</td><td>{esc(row['username'])}</td><td>{esc(row['action'])}</td><td>{esc(row['detail'])}</td><td>{esc(row['remote_addr'])}</td></tr>" for row in rows) or "<tr><td colspan='5' class='muted'>No activity recorded yet.</td></tr>"
