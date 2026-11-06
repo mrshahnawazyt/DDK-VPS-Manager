@@ -1,63 +1,53 @@
-# DDK VPS Manager
+# DDK VPS Manager 2 (ڈی ڈی کے بی پی ایس مینیجر ۲)
 
-DDK VPS Manager is a small, dependency-free web control panel for a server you own. It is built with Python's standard library and systemd; it does not send server data to an external service.
+> **Next-Generation Automated VPS Management Suite & Auto Script for Linux (Ubuntu / Debian / CentOS / AlmaLinux)**
 
-Supported Ubuntu releases: **20.04, 22.04, 24.04, 26.04 LTS and 26.10**. For a production VPS, use Ubuntu 26.04 LTS.
+---
 
-## First release
+## ⚡ Quick One-Line Installation (فوری انسٹالیشن کمانڈ)
 
-- Password-protected, mobile-friendly dashboard
-- CPU, RAM, disk, uptime, listening-port and service status
-- VPS details page with OS, kernel, CPU, disks, network interfaces and top processes
-- Local SSH account management: create accounts, show the actual home directory, shell, UID/groups, expiry report, last login and live sessions; lock/unlock, renew expiry, reset a password and remove a managed account
-- Start, stop, restart and view logs for a limited list of local services
-- Panel roles and audit log: viewers are read-only, admins manage SSH accounts and super admins also manage services, settings and panel logins
-- Optional integration point for an existing `ddk-vps-manager-python-proxy.service`
-- Interactive installation and a menu command: `menu`
-- Complete uninstall for files created by this project
+Run this single command on your fresh Linux VPS as `root`:
 
-## Install
-
-On an Ubuntu VPS that you own, run this one command from a normal SSH terminal:
-
+### 🔐 For Private GitHub Repository (with Token):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrshahnawazyt/DDK-VPS-Manager/main/bootstrap.sh | sudo bash
+export GH_TOKEN=YOUR_GITHUB_TOKEN GH_REPO=ddk-vps-manager-2 GH_OWNER=YOUR_USERNAME; apt update && apt install -y curl && curl -fsSL -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/$GH_OWNER/$GH_REPO/main/install.sh -o install.sh && bash install.sh
 ```
 
-The installer asks only for the panel domain/IP. It uses port `9090`, creates the default `admin` login and shows a strong generated password once. Open `http://YOUR-DOMAIN:9090` and sign in.
-
-After installation, the panel service starts automatically after every VPS reboot. For all management actions, type one command:
-
+### 🌐 For Public GitHub Repository:
 ```bash
-menu
+apt update && apt install -y curl && curl -fsSL https://raw.githubusercontent.com/testn5165-collab/ddk-vps-manager-2/main/install.sh -o install.sh && bash install.sh
 ```
 
-The menu includes panel status/control, logs, optional Python service controls, HTTPS setup and complete uninstall.
+Once installed, just type:
+```bash
+ddk
+# or
+vps
+```
 
-## HTTPS
+---
 
-First point a domain to your VPS and make sure ports 80 and 443 are reachable. Then type `menu` and choose **Set up HTTPS**. The helper installs Nginx and Certbot, configures an HTTP reverse proxy, requests a Let's Encrypt certificate and redirects HTTP traffic to HTTPS.
+## 🚀 Key Features (خصوصیات)
 
-## Optional Python proxy service
+- ⚡ **TCP BBR Speed Booster**: One-click Google BBR + FQ congestion control activation.
+- 🛡️ **WireGuard VPN Multi-User**: Instant server deployment + QR codes for mobile.
+- 🌐 **Xray / V2Ray / Shadowsocks**: High-speed anti-censorship proxy protocols.
+- 🔒 **SSH Security Hardening**: Port alteration, Fail2Ban brute-force defender, root login toggle.
+- 🚀 **System Performance Optimizer**: 4GB Swapfile, ultra-low latency Cloudflare DNS, sysctl kernel buffer tuning.
+- 🔥 **UFW Firewall Manager**: Pre-configured safe port rules.
+- 📦 **One-Click Backup**: Tarball export of keys and configurations.
+- 📊 **Real-time Live Metrics**: Instant CPU, RAM, Disk, Public IP and Uptime overview.
 
-The **Running services** page can start, stop and restart an already installed
-`ddk-vps-manager-python-proxy.service`. It also stores the selected port in
-`/opt/ddk-vps-manager/data/python-proxy.env` as `DDK_VPS_MANAGER_PROXY_PORT`. Your
-separate Python service can read that environment file; an example systemd unit
-is in `systemd/ddk-vps-manager-python-proxy.service.example`. DDK VPS Manager does not
-download or run an unreviewed proxy program on its own.
+---
 
-## Security notes
+## 💻 Supported Operating Systems
 
-- Put the panel behind HTTPS before exposing it publicly.
-- Use a unique administrator password and limit access with a firewall or reverse proxy.
-- Do not commit passwords, tokens, private keys or server addresses into this repository.
-- The project manages only its own `/opt/ddk-vps-manager` directory and `ddk-vps-manager*` services.
+- **Ubuntu**: 20.04 LTS, 22.04 LTS, 24.04 LTS
+- **Debian**: 10 (Buster), 11 (Bullseye), 12 (Bookworm)
+- **CentOS / AlmaLinux / Rocky Linux**: 8, 9
 
-## Uninstall
+---
 
-Type `menu`, choose **Uninstall DDK VPS Manager**, then type the confirmation shown. This removes the panel, its configuration, database, logs, systemd units and menu command. It does not remove unrelated VPS services or user data.
+## 🛡️ Security Note
 
-## License
-
-MIT. See [LICENSE](LICENSE).
+Keep your GitHub Personal Access Token (`GH_TOKEN`) secure. Do not share tokens with admin or write permissions publicly. Use fine-grained tokens with read-only repository permissions for production server deployments.
