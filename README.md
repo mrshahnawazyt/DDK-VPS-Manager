@@ -9,9 +9,9 @@ Supported Ubuntu releases: **20.04, 22.04, 24.04, 26.04 LTS and 26.10**. For a p
 - Password-protected, mobile-friendly dashboard
 - CPU, RAM, disk, uptime, listening-port and service status
 - VPS details page with OS, kernel, CPU, disks, network interfaces and top processes
-- Local SSH account management: create accounts, show the actual home directory and shell, lock/unlock, renew expiry, reset a password and remove a managed account
+- Local SSH account management: create accounts, show the actual home directory, shell, UID/groups, expiry report, last login and live sessions; lock/unlock, renew expiry, reset a password and remove a managed account
 - Start, stop, restart and view logs for a limited list of local services
-- Panel roles and audit log
+- Panel roles and audit log: viewers are read-only, admins manage SSH accounts and super admins also manage services, settings and panel logins
 - Optional integration point for an existing `ddk-vps-manager-python-proxy.service`
 - Interactive installation and a menu command: `menu`
 - Complete uninstall for files created by this project

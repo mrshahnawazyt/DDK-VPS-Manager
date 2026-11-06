@@ -30,6 +30,7 @@ SESSION_COOKIE = "ddk_vps_manager_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
 SERVICE_CATALOG = (
     ("ddk-vps-manager", "DDK VPS Manager", "This web panel"),
+    ("ssh", "OpenSSH", "Standard SSH server"),
     ("nginx", "Nginx", "Web server / TLS reverse proxy"),
     ("haproxy", "HAProxy", "Optional load balancer"),
     ("ddk-vps-manager-python-proxy", "Python Proxy", "Optional separately-installed Python service"),
@@ -231,6 +232,98 @@ def ssh_account_runtime(username: str, expires_on: str, panel_locked: bool) -> D
     return record
 
 
+def ssh_account_sessions(username: str) -> List[Dict[str, str]]:
+    """Return only live terminal sessions belonging to one managed account."""
+    rc, output = command(["who"])
+    if rc != 0 or not output:
+        return []
+    sessions: List[Dict[str, str]] = []
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[0] != username:
+            continue
+        sessions.append({
+            "terminal": parts[1],
+            "logged_in": f"{parts[2]} {parts[3]}",
+            "origin": " ".join(parts[4:]).strip("()") or "local / unavailable",
+        })
+    return sessions
+
+
+def ssh_account_detail(username: str, expires_on: str, panel_locked: bool) -> Dict[str, Any]:
+    """Read actual account metadata used by the account-detail page."""
+    runtime = ssh_account_runtime(username, expires_on, panel_locked)
+    detail: Dict[str, Any] = {**runtime, "uid": "—", "groups": "—", "last_login": "Unavailable", "expiry_report": "Unavailable"}
+    if not runtime["exists"]:
+        return detail
+    rc, uid = command(["id", "-u", username])
+    if rc == 0 and uid:
+        detail["uid"] = uid
+    rc, groups = command(["id", "-nG", username])
+    if rc == 0 and groups:
+        detail["groups"] = groups
+    rc, last_login = command(["lastlog", "-u", username])
+    if rc == 0 and last_login:
+        detail["last_login"] = last_login
+    rc, expiry_report = command(["chage", "-l", username])
+    if rc == 0 and expiry_report:
+        detail["expiry_report"] = expiry_report
+    detail["sessions"] = ssh_account_sessions(username)
+    return detail
+
+
+def ssh_server_info() -> Dict[str, str]:
+    """Inspect the installed OpenSSH daemon without changing its configuration."""
+    info = {"port": "22", "root_login": "Unknown", "password_auth": "Unknown", "max_sessions": "Unknown"}
+    rc, output = command(["sshd", "-T"], timeout=8)
+    if rc != 0:
+        return info
+    values: Dict[str, str] = {}
+    for line in output.splitlines():
+        key, _, value = line.partition(" ")
+        if key and value:
+            values[key.lower()] = value.strip()
+    info["port"] = values.get("port", info["port"])
+    info["root_login"] = values.get("permitrootlogin", info["root_login"])
+    info["password_auth"] = values.get("passwordauthentication", info["password_auth"])
+    info["max_sessions"] = values.get("maxsessions", info["max_sessions"])
+    return info
+
+
+def configure_ssh_banner(banner: str) -> Tuple[bool, str]:
+    """Safely enable or disable a DDK-owned OpenSSH login banner."""
+    banner_path = Path("/etc/issue.net")
+    dropin_path = Path("/etc/ssh/sshd_config.d/99-ddk-vps-manager-banner.conf")
+    try:
+        original_banner = banner_path.read_bytes() if banner_path.exists() else None
+        original_dropin = dropin_path.read_bytes() if dropin_path.exists() else None
+        dropin_path.parent.mkdir(parents=True, exist_ok=True)
+        if banner:
+            banner_path.write_text(banner.rstrip() + "\n", encoding="utf-8")
+            os.chmod(banner_path, 0o644)
+            dropin_path.write_text(f"Banner {banner_path}\n", encoding="utf-8")
+            os.chmod(dropin_path, 0o644)
+        elif dropin_path.exists():
+            dropin_path.unlink()
+        rc, output = command(["sshd", "-t"], timeout=10)
+        if rc != 0:
+            if original_banner is None:
+                banner_path.unlink(missing_ok=True)
+            else:
+                banner_path.write_bytes(original_banner)
+            if original_dropin is None:
+                dropin_path.unlink(missing_ok=True)
+            else:
+                dropin_path.write_bytes(original_dropin)
+            return False, output[:180] or "OpenSSH configuration check failed."
+        rc, output = command(["systemctl", "reload", "ssh"], timeout=12)
+        if rc != 0:
+            return False, output[:180] or "The banner was saved, but OpenSSH could not be reloaded."
+        return True, "SSH login banner updated."
+    except OSError as exc:
+        return False, str(exc)[:180]
+
+
 def renew_ssh_account(username: str, current_expiry: str, duration_days: int) -> Tuple[bool, str]:
     """Extend an existing managed Linux account without changing its password."""
     try:
@@ -389,7 +482,7 @@ def fmt_time(timestamp: int) -> str:
 
 
 CSS = """
-:root{color-scheme:dark;--bg:#090d0e;--panel:#12191a;--panel2:#182122;--line:#293637;--text:#e8f1f1;--muted:#8ba2a3;--accent:#52d9dc;--good:#5de28b;--warn:#efbe65;--bad:#fc7d7d}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{display:grid;grid-template-columns:235px 1fr;min-height:100vh}.brand{padding:21px 18px;border-bottom:1px solid var(--line);letter-spacing:.05em;font-weight:800;color:var(--accent)}.brand span{color:var(--text);font-weight:500}.side{border-right:1px solid var(--line);background:#0c1112}.nav{padding:13px 9px}.nav a{display:block;padding:11px 12px;border-radius:7px;color:var(--muted);text-decoration:none;margin:3px 0}.nav a:hover,.nav a.active{color:var(--accent);background:#132526}.side-foot{position:fixed;bottom:16px;left:18px;color:var(--muted);font-size:12px}.main{min-width:0}.top{height:65px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px}.crumb{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.user{color:var(--muted)}.user b{color:var(--text)}.content{max-width:1300px;margin:auto;padding:26px}.title-row{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:21px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin:0 0 15px}.grid{display:grid;gap:15px;grid-template-columns:repeat(4,minmax(0,1fr))}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.metric{font-size:27px;font-weight:700;margin:8px 0}.muted{color:var(--muted);font-size:12px}.status{border-radius:999px;padding:4px 8px;font-size:11px;white-space:nowrap}.running{background:#123523;color:var(--good)}.stopped,.not-installed{background:#272d2d;color:var(--muted)}.failed{background:#482022;color:var(--bad)}.unknown{background:#43351b;color:var(--warn)}.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:580px}.table th{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;text-align:left}.table th,.table td{border-bottom:1px solid var(--line);padding:12px 8px}.table td:first-child,.table th:first-child{padding-left:0}.table td:last-child,.table th:last-child{padding-right:0}.button{border:0;border-radius:7px;padding:9px 12px;background:var(--accent);color:#062123;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}.button.subtle{background:#253031;color:var(--text)}.button.danger{background:#4c2628;color:#ffdada}.button:disabled{opacity:.45;cursor:not-allowed}.button-row{display:flex;gap:7px;flex-wrap:wrap}.notice{border:1px solid #27585a;background:#113033;color:#b9f7f8;border-radius:8px;padding:11px 13px;margin-bottom:17px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}input,select{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);background:#0a1011;color:var(--text)}.login{min-height:100vh;display:grid;place-items:center;padding:20px}.login-box{width:min(410px,100%);padding:28px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.login-box h1{color:var(--accent);margin-bottom:8px}.login-box p{color:var(--muted);margin-bottom:22px}.login-box form>*{margin-top:13px}.small{font-size:12px}.pill{font-size:11px;padding:3px 7px;border:1px solid var(--line);border-radius:99px;color:var(--muted)}@media(max-width:850px){.shell{display:block}.side{position:sticky;top:0;z-index:2;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:12px 16px}.nav{display:flex;gap:4px;overflow:auto;padding:7px 9px}.nav a{white-space:nowrap;padding:8px 10px}.side-foot{display:none}.top{height:52px;padding:0 16px}.content{padding:17px}.grid,.grid.two{grid-template-columns:1fr 1fr}.title-row{align-items:flex-start;flex-direction:column}}@media(max-width:500px){.grid,.grid.two,.form-grid{grid-template-columns:1fr}.metric{font-size:23px}.user{font-size:12px}}
+:root{color-scheme:dark;--bg:#090d0e;--panel:#12191a;--panel2:#182122;--line:#293637;--text:#e8f1f1;--muted:#8ba2a3;--accent:#52d9dc;--good:#5de28b;--warn:#efbe65;--bad:#fc7d7d}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{display:grid;grid-template-columns:235px 1fr;min-height:100vh}.brand{padding:21px 18px;border-bottom:1px solid var(--line);letter-spacing:.05em;font-weight:800;color:var(--accent)}.brand span{color:var(--text);font-weight:500}.side{border-right:1px solid var(--line);background:#0c1112}.nav{padding:13px 9px}.nav a{display:block;padding:11px 12px;border-radius:7px;color:var(--muted);text-decoration:none;margin:3px 0}.nav a:hover,.nav a.active{color:var(--accent);background:#132526}.side-foot{position:fixed;bottom:16px;left:18px;color:var(--muted);font-size:12px}.main{min-width:0}.top{height:65px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px}.crumb{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.user{color:var(--muted)}.user b{color:var(--text)}.content{max-width:1300px;margin:auto;padding:26px}.title-row{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:21px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin:0 0 15px}.grid{display:grid;gap:15px;grid-template-columns:repeat(4,minmax(0,1fr))}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.metric{font-size:27px;font-weight:700;margin:8px 0}.muted{color:var(--muted);font-size:12px}.status{border-radius:999px;padding:4px 8px;font-size:11px;white-space:nowrap}.running{background:#123523;color:var(--good)}.stopped,.not-installed{background:#272d2d;color:var(--muted)}.failed{background:#482022;color:var(--bad)}.unknown{background:#43351b;color:var(--warn)}.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:580px}.table th{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;text-align:left}.table th,.table td{border-bottom:1px solid var(--line);padding:12px 8px}.table td:first-child,.table th:first-child{padding-left:0}.table td:last-child,.table th:last-child{padding-right:0}.button{border:0;border-radius:7px;padding:9px 12px;background:var(--accent);color:#062123;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}.button.subtle{background:#253031;color:var(--text)}.button.danger{background:#4c2628;color:#ffdada}.button:disabled{opacity:.45;cursor:not-allowed}.button-row{display:flex;gap:7px;flex-wrap:wrap}.notice{border:1px solid #27585a;background:#113033;color:#b9f7f8;border-radius:8px;padding:11px 13px;margin-bottom:17px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}input,select,textarea{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);background:#0a1011;color:var(--text)}textarea{min-height:118px;resize:vertical;font:inherit}.login{min-height:100vh;display:grid;place-items:center;padding:20px}.login-box{width:min(410px,100%);padding:28px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.login-box h1{color:var(--accent);margin-bottom:8px}.login-box p{color:var(--muted);margin-bottom:22px}.login-box form>*{margin-top:13px}.small{font-size:12px}.pill{font-size:11px;padding:3px 7px;border:1px solid var(--line);border-radius:99px;color:var(--muted)}@media(max-width:850px){.shell{display:block}.side{position:sticky;top:0;z-index:2;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:12px 16px}.nav{display:flex;gap:4px;overflow:auto;padding:7px 9px}.nav a{white-space:nowrap;padding:8px 10px}.side-foot{display:none}.top{height:52px;padding:0 16px}.content{padding:17px}.grid,.grid.two{grid-template-columns:1fr 1fr}.title-row{align-items:flex-start;flex-direction:column}}@media(max-width:500px){.grid,.grid.two,.form-grid{grid-template-columns:1fr}.metric{font-size:23px}.user{font-size:12px}}
 """
 CSS += ".status.active{background:#123523;color:var(--good)}.status.locked,.status.expired,.status.removed{background:#482022;color:var(--bad)}.button-row form{display:inline}code{color:#b9f7f8;word-break:break-all}pre.log{white-space:pre-wrap;overflow:auto;max-height:65vh;background:#0a1011;border:1px solid var(--line);padding:14px;border-radius:8px;color:#c9d6d7}"
 
@@ -500,6 +593,32 @@ class PanelHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def can_manage_ssh(self, user: Dict[str, Any]) -> bool:
+        return user["role"] in {"admin", "super_admin"}
+
+    def require_ssh_manager(self, user: Dict[str, Any]) -> bool:
+        if not self.can_manage_ssh(user):
+            self.redirect("/ssh-accounts?notice=" + quote("This action requires an Admin or Super Admin."))
+            return False
+        return True
+
+    def ssh_action_controls(self, username: str, state: str, csrf: str) -> str:
+        """Render controls shared by the accounts table and detail page."""
+        action = "unlock" if state == "locked" else "lock"
+        caption = "Unlock" if state == "locked" else "Lock"
+        safe_username = esc(username)
+        return (
+            f"<div class='button-row'><form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'>"
+            f"<input type='hidden' name='username' value='{safe_username}'>"
+            f"<button class='button subtle small' name='action' value='{action}'>{caption}</button></form>"
+            f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{safe_username}'>"
+            f"<button class='button subtle small' name='action' value='reset-password'>New password</button></form>"
+            f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{safe_username}'>"
+            f"<input name='days' value='30' inputmode='numeric' aria-label='Additional days' style='width:66px;padding:7px'><button class='button subtle small' name='action' value='renew'>Renew</button></form>"
+            f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{safe_username}'>"
+            f"<button class='button danger small' name='action' value='remove'>Remove</button></form></div>"
+        )
+
     def do_GET(self) -> None:
         path = self.request_path()
         if path == "/login":
@@ -512,6 +631,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.dashboard(user)
         elif path == "/ssh-accounts":
             self.ssh_accounts_page(user)
+        elif path == "/ssh-account":
+            self.ssh_account_detail_page(user)
         elif path == "/services":
             self.services_page(user)
         elif path == "/service-logs":
@@ -602,28 +723,17 @@ class PanelHandler(BaseHTTPRequestHandler):
                 "SELECT username, expires_on, created_at, locked FROM ssh_accounts ORDER BY id DESC"
             ).fetchall()
         csrf = self.csrf(user)
-        can_manage = user["role"] == "super_admin"
+        can_manage = self.can_manage_ssh(user)
+        server = ssh_server_info()
         rows = []
         for account in accounts:
             runtime = ssh_account_runtime(account["username"], account["expires_on"], bool(account["locked"]))
             state = runtime["state"]
             actions = "<span class='muted'>View-only role</span>"
             if can_manage:
-                action = "unlock" if state == "locked" else "lock"
-                caption = "Unlock" if state == "locked" else "Lock"
-                actions = (
-                    f"<div class='button-row'><form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'>"
-                    f"<input type='hidden' name='username' value='{esc(account['username'])}'>"
-                    f"<button class='button subtle small' name='action' value='{action}'>{caption}</button></form>"
-                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{esc(account['username'])}'>"
-                    f"<button class='button subtle small' name='action' value='reset-password'>New password</button></form>"
-                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{esc(account['username'])}'>"
-                    f"<input name='days' value='30' inputmode='numeric' aria-label='Additional days' style='width:66px;padding:7px'><button class='button subtle small' name='action' value='renew'>Renew</button></form>"
-                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{esc(account['username'])}'>"
-                    f"<button class='button danger small' name='action' value='remove'>Remove</button></form></div>"
-                )
+                actions = self.ssh_action_controls(account["username"], state, csrf)
             rows.append(
-                f"<tr><td><b>{esc(account['username'])}</b><div class='muted'>SSH port 22 · shell {esc(runtime['shell'])}</div></td>"
+                f"<tr><td><a href='/ssh-account?username={quote(account['username'])}'><b>{esc(account['username'])}</b></a><div class='muted'>SSH port {esc(server['port'])} · shell {esc(runtime['shell'])}</div></td>"
                 f"<td><code>{esc(runtime['home'])}</code></td><td><span class='status {state}'>{state}</span>"
                 f"<div class='muted'>{runtime['online']} session(s) online</div></td><td>{esc(account['expires_on'])}</td>"
                 f"<td>{esc(fmt_time(account['created_at']))}</td><td>{actions}</td></tr>"
@@ -637,14 +747,41 @@ class PanelHandler(BaseHTTPRequestHandler):
 <div class='button-row' style='margin-top:16px'><button class='button'>Create account</button></div></form>
 <p class='muted'>A random password is shown once after creation. The expiry date is enforced by Ubuntu for this Linux account.</p></article>"""
         else:
-            create_card = "<article class='card'><h2>SSH accounts</h2><p class='muted'>Only a super administrator can create SSH accounts.</p></article>"
+            create_card = "<article class='card'><h2>SSH accounts</h2><p class='muted'>Only an Admin or Super Admin can create and manage SSH accounts.</p></article>"
         content = f"""{self.notice()}<div class='title-row'><div><h1>SSH accounts</h1><div class='muted'>Manage local SSH users created by DDK VPS Manager.</div></div></div>
-<div class='grid two'>{create_card}<article class='card'><h2>Connection details</h2><p class='muted'>Host: <b>{esc(get_setting('domain', 'your-vps-ip'))}</b><br>Port: <b>22</b><br>Each account shows its actual Linux home directory, shell, lock/expiry state and logged-in session count.</p></article></div>
+<div class='grid two'>{create_card}<article class='card'><h2>Connection details</h2><p class='muted'>Host: <b>{esc(get_setting('domain', 'your-vps-ip'))}</b><br>Port: <b>{esc(server['port'])}</b><br>Root login: <b>{esc(server['root_login'])}</b><br>Password authentication: <b>{esc(server['password_auth'])}</b><br>Each account opens a detail page with actual home directory, shell, expiry report, last login and live sessions.</p></article></div>
 <article class='card' style='margin-top:15px'><h2>Created accounts</h2><div class='table-wrap'><table class='table'><thead><tr><th>Username</th><th>Home directory</th><th>Status</th><th>Expiry</th><th>Created</th><th>Actions</th></tr></thead><tbody>{table}</tbody></table></div></article>"""
         self.send_html(self.page("SSH accounts", content, user, "ssh"))
 
+    def ssh_account_detail_page(self, user: Dict[str, Any]) -> None:
+        username = parse_qs(urlparse(self.path).query).get("username", [""])[0]
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{2,31}", username):
+            self.redirect("/ssh-accounts?notice=" + quote("Choose a managed SSH account."))
+            return
+        with connection() as db:
+            account = db.execute(
+                "SELECT username, expires_on, created_at, locked FROM ssh_accounts WHERE username = ?", (username,)
+            ).fetchone()
+        if not account:
+            self.redirect("/ssh-accounts?notice=" + quote("This account is not managed by DDK VPS Manager."))
+            return
+        detail = ssh_account_detail(username, account["expires_on"], bool(account["locked"]))
+        sessions = detail.get("sessions", [])
+        session_rows = "".join(
+            f"<tr><td><code>{esc(item['terminal'])}</code></td><td>{esc(item['logged_in'])}</td><td>{esc(item['origin'])}</td></tr>"
+            for item in sessions
+        ) or "<tr><td colspan='3' class='muted'>No active terminal session is reported for this account.</td></tr>"
+        action_card = "<p class='muted'>This role can view the account but cannot change it.</p>"
+        if self.can_manage_ssh(user):
+            action_card = self.ssh_action_controls(username, str(detail["state"]), self.csrf(user))
+        content = f"""{self.notice()}<div class='title-row'><div><h1>SSH account: {esc(username)}</h1><div class='muted'>Actual metadata from the local Linux account.</div></div><a class='button subtle' href='/ssh-accounts'>Back to accounts</a></div>
+<div class='grid two'><article class='card'><h2>Account details</h2><p class='muted'>Status<br><span class='status {esc(str(detail['state']))}'>{esc(detail['state'])}</span></p><p class='muted'>Home directory<br><code>{esc(detail['home'])}</code></p><p class='muted'>Shell / UID<br><b>{esc(detail['shell'])}</b> · {esc(detail['uid'])}</p><p class='muted'>Groups<br><b>{esc(detail['groups'])}</b></p><p class='muted'>Created<br><b>{esc(fmt_time(account['created_at']))}</b></p></article><article class='card'><h2>Access controls</h2>{action_card}<p class='muted' style='margin-top:16px'>Expiry is enforced on the Linux account. Passwords are never stored in the panel.</p></article></div>
+<div class='grid two' style='margin-top:15px'><article class='card'><h2>Live sessions</h2><div class='table-wrap'><table class='table'><thead><tr><th>Terminal</th><th>Logged in</th><th>Origin</th></tr></thead><tbody>{session_rows}</tbody></table></div></article><article class='card'><h2>Last login</h2><pre class='log'>{esc(detail['last_login'])}</pre></article></div>
+<article class='card' style='margin-top:15px'><h2>Expiry and password state</h2><pre class='log'>{esc(detail['expiry_report'])}</pre></article>"""
+        self.send_html(self.page("SSH account", content, user, "ssh"))
+
     def ssh_create(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
-        if not self.require_super_admin(user):
+        if not self.require_ssh_manager(user):
             return
         username = form.get("username", "").strip().lower()
         if not re.fullmatch(r"[a-z][a-z0-9_-]{2,31}", username):
@@ -666,7 +803,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         self.redirect("/ssh-accounts")
 
     def ssh_action(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
-        if not self.require_super_admin(user):
+        if not self.require_ssh_manager(user):
             return
         username = form.get("username", "")
         action = form.get("action", "")
@@ -799,8 +936,10 @@ class PanelHandler(BaseHTTPRequestHandler):
     def settings_page(self, user: Dict[str, Any]) -> None:
         csrf = self.csrf(user)
         disabled = "" if user["role"] == "super_admin" else "disabled"
+        banner = get_setting("ssh_banner")
+        ssh_info = ssh_server_info()
         content = f"""{self.notice()}<div class='title-row'><div><h1>Settings</h1><div class='muted'>Panel address settings. Restart the panel after changing the port.</div></div></div>
-<div class='grid two'><article class='card'><h2>Panel address</h2><form method='post' action='/settings'><input type='hidden' name='csrf' value='{csrf}'><div class='form-grid'><label>Domain or VPS IP<input name='domain' value='{esc(get_setting('domain'))}' maxlength='253' required {disabled}></label><label>Panel port<input name='port' value='{esc(get_setting('port','9090'))}' inputmode='numeric' required {disabled}></label></div><div class='button-row' style='margin-top:16px'><button class='button' {disabled}>Save settings</button></div></form><p class='muted'>The panel does not create DNS records. Point your domain to your VPS before using it.</p></article><article class='card'><h2>HTTPS checklist</h2><p class='muted'>For a public server, put this panel behind a trusted HTTPS reverse proxy, use a firewall allow-list, and keep a unique administrator password.</p><p class='muted'>Current panel process: <span class='pill'>ddk-vps-manager.service</span></p></article></div>"""
+<div class='grid two'><article class='card'><h2>Panel address</h2><form method='post' action='/settings'><input type='hidden' name='csrf' value='{csrf}'><div class='form-grid'><label>Domain or VPS IP<input name='domain' value='{esc(get_setting('domain'))}' maxlength='253' required {disabled}></label><label>Panel port<input name='port' value='{esc(get_setting('port','9090'))}' inputmode='numeric' required {disabled}></label></div><label style='margin-top:13px'>SSH login banner<textarea name='ssh_banner' maxlength='1600' placeholder='Optional message displayed before SSH authentication.' {disabled}>{esc(banner)}</textarea></label><div class='button-row' style='margin-top:16px'><button class='button' {disabled}>Save settings</button></div></form><p class='muted'>The panel does not create DNS records. Point your domain to your VPS before using it. Saving a banner validates OpenSSH before reloading it.</p></article><article class='card'><h2>SSH & HTTPS</h2><p class='muted'>OpenSSH port: <b>{esc(ssh_info['port'])}</b><br>Root login: <b>{esc(ssh_info['root_login'])}</b><br>Password authentication: <b>{esc(ssh_info['password_auth'])}</b><br>Max sessions: <b>{esc(ssh_info['max_sessions'])}</b></p><p class='muted'>For a public server, put this panel behind a trusted HTTPS reverse proxy, use a firewall allow-list, and keep a unique administrator password.</p><p class='muted'>Current panel process: <span class='pill'>ddk-vps-manager.service</span></p></article></div>"""
         self.send_html(self.page("Settings", content, user, "settings"))
 
     def save_settings(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
@@ -808,15 +947,27 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         domain = form.get("domain", "").strip()
         port = form.get("port", "").strip()
+        banner = form.get("ssh_banner", "").replace("\r\n", "\n").strip()
         if not re.fullmatch(r"[A-Za-z0-9._:-]{1,253}", domain):
             self.redirect("/settings?notice=" + quote("Enter a valid domain name or IP address."))
             return
         if not re.fullmatch(r"[0-9]{2,5}", port) or not 1024 <= int(port) <= 65535:
             self.redirect("/settings?notice=" + quote("Choose a port from 1024 to 65535."))
             return
+        if len(banner) > 1600 or "\x00" in banner:
+            self.redirect("/settings?notice=" + quote("SSH banner must be 1600 characters or fewer."))
+            return
+        banner_changed = banner != get_setting("ssh_banner")
+        if banner_changed:
+            updated, result = configure_ssh_banner(banner)
+            if not updated:
+                self.redirect("/settings?notice=" + quote(f"SSH banner was not changed: {result}"))
+                return
+            set_setting("ssh_banner", banner)
         set_setting("domain", domain)
         set_setting("port", port)
-        audit(user["username"], "settings_update", f"Panel address changed to {domain}:{port}", self.client_address[0])
+        detail = f"Panel address changed to {domain}:{port}" + ("; SSH banner updated" if banner_changed else "")
+        audit(user["username"], "settings_update", detail, self.client_address[0])
         self.redirect("/settings?notice=" + quote("Saved. Restart DDK VPS Manager from the VPS menu to use a new port."))
 
     def save_python_proxy_port(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
@@ -845,7 +996,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         rows = "".join(f"<tr><td><b>{esc(row['username'])}</b></td><td><span class='pill'>{esc(row['role'])}</span></td><td>{esc(fmt_time(row['created_at']))}</td></tr>" for row in users)
         csrf = self.csrf(user)
         if user["role"] == "super_admin":
-            create_card = f"""<article class='card'><h2>Add panel login</h2><form method='post' action='/admin-create'><input type='hidden' name='csrf' value='{csrf}'><div class='form-grid'><label>Username<input name='username' maxlength='32' required></label><label>Role<select name='role'><option value='viewer'>Viewer</option><option value='admin'>Admin</option></select></label><label>Password<input name='password' type='password' minlength='12' required></label></div><div class='button-row' style='margin-top:16px'><button class='button'>Create login</button></div></form><p class='muted'>Viewers can see status. Admin roles are reserved for later account-management modules. Only super admins can control services.</p></article>"""
+            create_card = f"""<article class='card'><h2>Add panel login</h2><form method='post' action='/admin-create'><input type='hidden' name='csrf' value='{csrf}'><div class='form-grid'><label>Username<input name='username' maxlength='32' required></label><label>Role<select name='role'><option value='viewer'>Viewer</option><option value='admin'>Admin</option></select></label><label>Password<input name='password' type='password' minlength='12' required></label></div><div class='button-row' style='margin-top:16px'><button class='button'>Create login</button></div></form><p class='muted'>Viewer: read-only status and account details. Admin: creates and manages DDK SSH accounts. Super Admin: also controls services, panel settings and panel logins.</p></article>"""
         else:
             create_card = "<article class='card'><h2>Roles</h2><p class='muted'>Only a super administrator can create panel logins.</p></article>"
         content = f"""{self.notice()}<div class='title-row'><div><h1>Panel admins</h1><div class='muted'>Access is stored on this VPS only.</div></div></div><div class='grid two'>{create_card}<article class='card'><h2>Existing logins</h2><div class='table-wrap'><table class='table'><thead><tr><th>Username</th><th>Role</th><th>Created</th></tr></thead><tbody>{rows}</tbody></table></div></article></div>"""
