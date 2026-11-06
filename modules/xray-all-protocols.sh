@@ -10,7 +10,14 @@ CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo -e "${CYAN}=== Configuring Xray Multi-Protocol Inbounds ===${NC}"
+DOMAIN="${1:-$(cat /etc/ddk-vps/domain.conf 2>/dev/null || curl -s -4 icanhazip.com)}"
+
+echo -e "${CYAN}=== Configuring Xray Multi-Protocol Inbounds for Domain: $DOMAIN ===${NC}"
+
+# Install latest Xray-core binary if missing
+if ! command -v xray >/dev/null 2>&1; then
+  bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh 2>/dev/null)" @ install > /dev/null 2>&1 || true
+fi
 
 XRAY_CONF="/usr/local/etc/xray/config.json"
 mkdir -p /usr/local/etc/xray
@@ -25,6 +32,7 @@ cat << XRAY_MULTI > "$XRAY_CONF"
   "inbounds": [
     {
       "port": 8442,
+      "listen": "127.0.0.1",
       "protocol": "vmess",
       "settings": {
         "clients": [{ "id": "$UUID", "alterId": 0 }]
@@ -36,6 +44,7 @@ cat << XRAY_MULTI > "$XRAY_CONF"
     },
     {
       "port": 8443,
+      "listen": "127.0.0.1",
       "protocol": "vless",
       "settings": {
         "clients": [{ "id": "$UUID", "level": 0 }],
@@ -48,6 +57,7 @@ cat << XRAY_MULTI > "$XRAY_CONF"
     },
     {
       "port": 8445,
+      "listen": "127.0.0.1",
       "protocol": "trojan",
       "settings": {
         "clients": [{ "password": "trojan_$UUID" }]
@@ -66,7 +76,25 @@ cat << XRAY_MULTI > "$XRAY_CONF"
       },
       "streamSettings": {
         "network": "tcp",
-        "security": "reality"
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "yahoo.com:443",
+          "xver": 0,
+          "serverNames": ["yahoo.com", "www.yahoo.com"]
+        }
+      }
+    },
+    {
+      "port": 8447,
+      "listen": "127.0.0.1",
+      "protocol": "trojan",
+      "settings": {
+        "clients": [{ "password": "trojan_$UUID" }]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "grpcSettings": { "serviceName": "trojan-grpc" }
       }
     }
   ],
@@ -77,4 +105,4 @@ cat << XRAY_MULTI > "$XRAY_CONF"
 XRAY_MULTI
 
 systemctl restart xray 2>/dev/null || true
-echo -e "${GREEN}[SUCCESS] All protocols (VMess, VLESS, Trojan, Reality) configured!${NC}"
+echo -e "${GREEN}[SUCCESS] All protocols (VMess, VLESS WS, VLESS Reality, Trojan WS/gRPC) active!${NC}"
