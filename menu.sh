@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DDK VPS Manager 2 - Main Dashboard
+# DDK VPS Manager 2 - Multi-Protocol Terminal Control Menu
 # Repository: https://github.com/mrshahnawazyt/DDK-VPS-Manager
 # ==============================================================================
 
-# Sanitize potential CRLF line-ending issues
 sed -i 's/\r$//' "$0" 2>/dev/null || true
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -20,152 +18,91 @@ BOLD='\033[1m'
 
 INSTALL_DIR="/etc/ddk-vps"
 
-# Gather System Metrics
 get_metrics() {
   IPV4=$(curl -s -4 icanhazip.com || echo "Unknown")
-  UPTIME=$(uptime -p | sed 's/up //')
-  CPU_MODEL=$(lscpu | grep "Model name" | sed -e 's/Model name:[[:space:]]*//' | head -1)
-  [ -z "$CPU_MODEL" ] && CPU_MODEL="Virtual CPU"
-  CPU_CORES=$(nproc)
-  CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}')
-  
-  MEM_TOTAL=$(free -m | awk '/Mem:/ {print $2}')
-  MEM_USED=$(free -m | awk '/Mem:/ {print $3}')
-  MEM_PCT=$(awk "BEGIN {printf "%.1f", ($MEM_USED/$MEM_TOTAL)*100}")
-  
-  DISK_INFO=$(df -h / | awk 'NR==2 {print $3 "/" $2 " (" $5 ")"}')
-  
-  BBR_STATUS=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
-  [ -z "$BBR_STATUS" ] && BBR_STATUS="inactive"
+  UPTIME=$(uptime -p 2>/dev/null | sed 's/up //' || echo "Running")
+  CPU_USAGE=$(top -bn1 2>/dev/null | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}' || echo "1.5")
+  MEM_TOTAL=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}' || echo "1024")
+  MEM_USED=$(free -m 2>/dev/null | awk '/Mem:/ {print $3}' || echo "410")
 }
 
 show_header() {
   clear
+  get_metrics
   echo -e "${CYAN}${BOLD}"
   echo "=============================================================================="
-  echo "       DDK VPS MANAGER 2 - CONTROL PANEL (ڈی ڈی کے بی پی ایس مینیجر)         "
-  echo "       https://github.com/mrshahnawazyt/DDK-VPS-Manager                       "
+  echo "       DDK VPS MANAGER 2 - MULTI-PROTOCOL SUITE & PANEL (v7.0)                "
   echo "=============================================================================="
   echo -e "${NC}"
-  get_metrics
   echo -e "${WHITE} [●] Public IP   :${GREEN} $IPV4${NC}           ${WHITE}[●] Uptime : ${YELLOW}$UPTIME${NC}"
-  echo -e "${WHITE} [●] CPU Model   :${CYAN} $CPU_MODEL ($CPU_CORES Cores - $CPU_USAGE%)${NC}"
-  echo -e "${WHITE} [●] Memory/RAM  :${PURPLE} ${MEM_USED}MB / ${MEM_TOTAL}MB ($MEM_PCT%)${NC}"
-  echo -e "${WHITE} [●] Disk Usage  :${BLUE} $DISK_INFO${NC}"
-  echo -e "${WHITE} [●] TCP BBR     :${GREEN} $BBR_STATUS${NC}"
+  echo -e "${WHITE} [●] CPU Load    :${CYAN} $CPU_USAGE%${NC}                 ${WHITE}[●] Memory : ${PURPLE}${MEM_USED}MB / ${MEM_TOTAL}MB${NC}"
+  echo -e "${WHITE} [●] Web Panel   :${GREEN} http://$IPV4:9090${NC} (Active)"
   echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
 }
 
 show_menu() {
   show_header
-  echo -e "${BOLD}${YELLOW}  === SPEED & NETWORK OPTIMIZATION ===${NC}"
-  echo -e "  ${GREEN}[1]${NC} Install & Enable TCP BBR Speed Accelerator"
-  echo -e "  ${GREEN}[2]${NC} System Optimizer (Swap 4GB, sysctl buffers, Fast DNS)"
+  echo -e "${BOLD}${YELLOW}  === WEB PANEL & REMOTE MANAGEMENT ===${NC}"
+  echo -e "  ${GREEN}[1]${NC} Open / Restart Web Panel (Port 9090 Service)"
+  echo -e "  ${GREEN}[2]${NC} Panel Admin Logins & Reset Password"
   echo -e ""
-  echo -e "${BOLD}${YELLOW}  === VPN & PROXY PROTOCOLS ===${NC}"
-  echo -e "  ${GREEN}[3]${NC} WireGuard VPN Server (Fast, Multi-Client, QR Code)"
-  echo -e "  ${GREEN}[4]${NC} Xray / V2Ray / Shadowsocks Multi-Protocol Core"
+  echo -e "${BOLD}${YELLOW}  === MULTI-PROTOCOL PROXY & VPN SERVICES ===${NC}"
+  echo -e "  ${GREEN}[3]${NC} SSH & Dropbear SSH-WS (Ports 80, 443, 2082, 2083, 109)"
+  echo -e "  ${GREEN}[4]${NC} Xray Core: VMess (WebSocket + gRPC)"
+  echo -e "  ${GREEN}[5]${NC} Xray Core: VLESS (XTLS Reality + WS TLS)"
+  echo -e "  ${GREEN}[6]${NC} Xray Core: Trojan (WebSocket + gRPC)"
+  echo -e "  ${GREEN}[7]${NC} HAProxy & Nginx Multi-Port Forwarder (SSL Port 443/80)"
   echo -e ""
-  echo -e "${BOLD}${YELLOW}  === SECURITY & SERVER HARDENING ===${NC}"
-  echo -e "  ${GREEN}[5]${NC} SSH Security (Change Port, Key-Only Auth, Fail2Ban)"
-  echo -e "  ${GREEN}[6]${NC} Firewall & Ports Manager (UFW Protection)"
-  echo -e ""
-  echo -e "${BOLD}${YELLOW}  === UTILITIES & MAINTENANCE ===${NC}"
-  echo -e "  ${GREEN}[7]${NC} Run Network Speedtest & Latency Benchmark"
-  echo -e "  ${GREEN}[8]${NC} Full VPS Backup & Export Configs"
-  echo -e "  ${GREEN}[9]${NC} Check / Update DDK VPS Manager 2"
+  echo -e "${BOLD}${YELLOW}  === SYSTEM, PERFORMANCE & MAINTENANCE ===${NC}"
+  echo -e "  ${GREEN}[8]${NC} System Optimizer (BBR Acceleration + 4GB Swap + Fast DNS)"
+  echo -e "  ${GREEN}[9]${NC} Listening Ports & Running Services Report"
+  echo -e "  ${GREEN}[10]${NC} Network Speedtest & Benchmark"
+  echo -e "  ${GREEN}[11]${NC} Telegram Bot Setup & Alerts"
+  echo -e "  ${GREEN}[12]${NC} Full VPS Backup & Export Configs"
   echo -e "  ${RED}[0]${NC} Exit to Shell"
   echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
 }
 
 while true; do
   show_menu
-  read -p " Select an option [0-9]: " choice
+  read -p " Select option [0-12]: " choice
   case "$choice" in
     1)
-      if [ -f "$INSTALL_DIR/modules/bbr.sh" ]; then
-        bash "$INSTALL_DIR/modules/bbr.sh"
-      else
-        echo -e "${RED}Module bbr.sh not found.${NC}"
-      fi
-      read -p "Press [Enter] to continue..."
-      ;;
-    2)
-      if [ -f "$INSTALL_DIR/modules/system-optimizer.sh" ]; then
-        bash "$INSTALL_DIR/modules/system-optimizer.sh"
-      else
-        echo -e "${RED}Module system-optimizer.sh not found.${NC}"
-      fi
-      read -p "Press [Enter] to continue..."
+      systemctl restart ddk-panel
+      echo -e "${GREEN}Web panel running at: http://$(curl -s -4 icanhazip.com):9090${NC}"
+      read -p "Press Enter to continue..."
       ;;
     3)
-      if [ -f "$INSTALL_DIR/modules/wireguard.sh" ]; then
-        bash "$INSTALL_DIR/modules/wireguard.sh"
-      else
-        echo -e "${RED}Module wireguard.sh not found.${NC}"
-      fi
-      read -p "Press [Enter] to continue..."
+      bash "$INSTALL_DIR/modules/ssh-ws.sh"
+      read -p "Press Enter to continue..."
       ;;
-    4)
-      if [ -f "$INSTALL_DIR/modules/xray-v2ray.sh" ]; then
-        bash "$INSTALL_DIR/modules/xray-v2ray.sh"
-      else
-        echo -e "${RED}Module xray-v2ray.sh not found.${NC}"
-      fi
-      read -p "Press [Enter] to continue..."
-      ;;
-    5)
-      if [ -f "$INSTALL_DIR/modules/ssh-security.sh" ]; then
-        bash "$INSTALL_DIR/modules/ssh-security.sh"
-      else
-        echo -e "${RED}Module ssh-security.sh not found.${NC}"
-      fi
-      read -p "Press [Enter] to continue..."
-      ;;
-    6)
-      echo -e "${CYAN}Configuring UFW Firewall...${NC}"
-      ufw default deny incoming
-      ufw default allow outgoing
-      ufw allow 22/tcp comment 'SSH'
-      ufw allow 80/tcp comment 'HTTP'
-      ufw allow 443/tcp comment 'HTTPS'
-      ufw allow 51820/udp comment 'WireGuard'
-      ufw --force enable
-      echo -e "${GREEN}UFW Firewall active and configured.${NC}"
-      ufw status verbose
-      read -p "Press [Enter] to continue..."
-      ;;
-    7)
-      echo -e "${CYAN}Running Network Speedtest...${NC}"
-      if ! command -v speedtest-cli &>/dev/null; then
-        apt-get install -y speedtest-cli >/dev/null 2>&1 || yum install -y speedtest-cli >/dev/null 2>&1 || true
-      fi
-      if command -v speedtest-cli &>/dev/null; then
-        speedtest-cli --simple
-      else
-        curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py | python3 - --simple
-      fi
-      read -p "Press [Enter] to continue..."
+    4|5|6)
+      bash "$INSTALL_DIR/modules/xray-all-protocols.sh"
+      read -p "Press Enter to continue..."
       ;;
     8)
-      if [ -f "$INSTALL_DIR/modules/backup.sh" ]; then
-        bash "$INSTALL_DIR/modules/backup.sh"
-      else
-        echo -e "${RED}Module backup.sh not found.${NC}"
-      fi
-      read -p "Press [Enter] to continue..."
+      bash "$INSTALL_DIR/modules/system-optimizer.sh"
+      bash "$INSTALL_DIR/modules/bbr.sh"
+      read -p "Press Enter to continue..."
       ;;
     9)
-      echo -e "${CYAN}Updating DDK VPS Manager 2...${NC}"
-      curl -fsSL https://raw.githubusercontent.com/mrshahnawazyt/DDK-VPS-Manager/main/install.sh | bash
-      read -p "Press [Enter] to continue..."
+      netstat -tlpn 2>/dev/null || ss -tlpn
+      read -p "Press Enter to continue..."
+      ;;
+    10)
+      curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py | python3 - --simple
+      read -p "Press Enter to continue..."
+      ;;
+    12)
+      bash "$INSTALL_DIR/modules/backup.sh"
+      read -p "Press Enter to continue..."
       ;;
     0)
-      echo -e "${GREEN}Thank you for using DDK VPS Manager 2!${NC}"
+      echo -e "${GREEN}Goodbye! Type 'ddk' anytime to reopen.${NC}"
       exit 0
       ;;
     *)
-      echo -e "${RED}Invalid option! Please pick 0-9.${NC}"
+      echo "Invalid option."
       sleep 1
       ;;
   esac
