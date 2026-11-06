@@ -14,10 +14,10 @@ DDK VPS Manager is a small, dependency-free web control panel for a server you o
 
 ## Install
 
-On an Ubuntu or Debian VPS that you own, download the release archive or clone this repository, then run:
+On an Ubuntu or Debian VPS that you own, run this one command:
 
 ```bash
-sudo bash install.sh
+curl -fsSL https://raw.githubusercontent.com/mrshahnawazyt/DDK-VPS-Manager/main/bootstrap.sh | sudo bash
 ```
 
 The installer asks for the domain/IP, panel port and first admin username. It creates a strong password and shows it once. Open `http://YOUR-DOMAIN:PORT` and sign in.
