@@ -36,4 +36,12 @@ if [[ ! -f "$SOURCE_DIR/install.sh" ]]; then
   exit 1
 fi
 
-bash "$SOURCE_DIR/install.sh"
+# This bootstrap is commonly run through `curl | bash`. In that case stdin is
+# already the downloaded script, not the SSH terminal. Give the interactive
+# installer the real terminal so its domain/port/admin prompts are visible.
+if [[ ! -r /dev/tty ]]; then
+  echo "No interactive terminal is available. Run this from a normal SSH terminal."
+  exit 1
+fi
+
+bash "$SOURCE_DIR/install.sh" < /dev/tty

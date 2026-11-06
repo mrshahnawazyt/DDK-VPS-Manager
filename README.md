@@ -16,7 +16,7 @@ Supported Ubuntu releases: **20.04, 22.04, 24.04, 26.04 LTS and 26.10**. For a p
 
 ## Install
 
-On an Ubuntu or Debian VPS that you own, run this one command:
+On an Ubuntu VPS that you own, run this one command from a normal SSH terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mrshahnawazyt/DDK-VPS-Manager/main/bootstrap.sh | sudo bash
