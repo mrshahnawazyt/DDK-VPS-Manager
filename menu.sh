@@ -25,6 +25,7 @@ get_metrics() {
   CPU_USAGE=$(top -bn1 2>/dev/null | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}' || echo "1.5")
   MEM_TOTAL=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}' || echo "1024")
   MEM_USED=$(free -m 2>/dev/null | awk '/Mem:/ {print $3}' || echo "410")
+  CREDS_PASS=$(grep -o '"password": *"[^"]*"' "$INSTALL_DIR/panel/credentials.json" 2>/dev/null | cut -d'"' -f4 || echo "admin123")
 }
 
 show_header() {
@@ -37,7 +38,8 @@ show_header() {
   echo -e "${NC}"
   echo -e "${WHITE} [●] Domain / Host:${CYAN} $DOMAIN${NC}           ${WHITE}[●] Uptime : ${YELLOW}$UPTIME${NC}"
   echo -e "${WHITE} [●] Public IP    :${GREEN} $IPV4${NC}             ${WHITE}[●] Memory : ${PURPLE}${MEM_USED}MB / ${MEM_TOTAL}MB${NC}"
-  echo -e "${WHITE} [●] Web Panel    :${GREEN} http://$IPV4:9090${NC} (or https://$DOMAIN:9090)"
+  echo -e "${WHITE} [●] Web Panel    :${GREEN} https://$DOMAIN:9090${NC} (or http://$IPV4:9090)"
+  echo -e "${WHITE} [●] Panel Auth   :${WHITE} User: ${CYAN}admin${WHITE} | Password: ${YELLOW}$CREDS_PASS${NC}"
   echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
 }
 
@@ -71,7 +73,7 @@ while true; do
   case "$choice" in
     1)
       systemctl restart ddk-panel
-      echo -e "${GREEN}[OK] Web panel restarted. Access at: http://$IPV4:9090 or https://$DOMAIN:9090${NC}"
+      echo -e "${GREEN}[OK] Web panel restarted. Access at: https://$DOMAIN:9090 or http://$IPV4:9090${NC}"
       read -p "Press Enter to continue..."
       ;;
     2)

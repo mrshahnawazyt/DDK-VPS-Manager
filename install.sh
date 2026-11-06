@@ -6,7 +6,6 @@
 # License: MIT
 # ==============================================================================
 
-# Sanitize potential CRLF line-ending issues
 if [ -f "$0" ]; then
   sed -i 's/\r$//' "$0" 2>/dev/null || true
 fi
@@ -61,7 +60,6 @@ else
 fi
 echo -e "${GREEN}[OK]${NC} Detected OS: ${CYAN}$OS $VER${NC}"
 
-# Detect Public IP
 IPV4=$(curl -s -4 icanhazip.com || curl -s -4 ifconfig.me || curl -s -4 ipinfo.io/ip || echo "127.0.0.1")
 echo -e "${GREEN}[OK]${NC} Public IPv4: ${YELLOW}$IPV4${NC}"
 
@@ -102,7 +100,6 @@ else
   fi
 fi
 
-# Save domain configuration
 mkdir -p "$INSTALL_DIR"
 echo "$DOMAIN" > "$INSTALL_DIR/domain.conf"
 echo -e "${GREEN}[OK]${NC} Configured domain: ${CYAN}$DOMAIN${NC}"
@@ -123,11 +120,23 @@ elif [[ "$OS" == "centos" || "$OS" == "almalinux" || "$OS" == "rocky" ]]; then
 fi
 echo -e "${GREEN}[OK]${NC} System packages installed."
 
-# Setup Directories
 mkdir -p "$INSTALL_DIR/modules"
 mkdir -p "$INSTALL_DIR/panel"
 mkdir -p "$INSTALL_DIR/configs"
 mkdir -p "$INSTALL_DIR/ssl"
+
+# Auto-generate random secure admin password
+ADMIN_PASS=$(openssl rand -hex 6 2>/dev/null || date +%s | tail -c 8)
+cat << CREDS > "$INSTALL_DIR/panel/credentials.json"
+{
+  "username": "admin",
+  "password": "$ADMIN_PASS",
+  "role": "Super Admin",
+  "domain": "$DOMAIN",
+  "created_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+}
+CREDS
+chmod 600 "$INSTALL_DIR/panel/credentials.json"
 
 # ==============================================================================
 # SSL CERTIFICATE ISSUANCE (ACME.SH / ZERO-SSL / SELF-SIGNED)
@@ -146,7 +155,6 @@ if [ "$DOMAIN" != "$IPV4" ]; then
     --key-file "$INSTALL_DIR/ssl/ddk.key" >/dev/null 2>&1 || true
 fi
 
-# Fallback Self-Signed if needed
 if [ ! -f "$INSTALL_DIR/ssl/ddk.crt" ]; then
   echo -e "${YELLOW}[INFO]${NC} Generating high-grade 2048-bit SSL certificate..."
   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
@@ -155,7 +163,6 @@ if [ ! -f "$INSTALL_DIR/ssl/ddk.crt" ]; then
     -subj "/C=US/ST=Cloud/L=Server/O=DDK-VPS/CN=$DOMAIN" >/dev/null 2>&1 || true
 fi
 
-# HAProxy combined PEM
 cat "$INSTALL_DIR/ssl/ddk.crt" "$INSTALL_DIR/ssl/ddk.key" > "$INSTALL_DIR/ssl/ddk.pem" 2>/dev/null || true
 echo -e "${GREEN}[OK]${NC} SSL Certificate active at $INSTALL_DIR/ssl/ddk.crt"
 
@@ -293,7 +300,6 @@ systemctl daemon-reload
 systemctl enable ddk-panel > /dev/null 2>&1 || true
 systemctl restart ddk-panel 2>/dev/null || true
 
-# Setup Global Binaries
 cat << 'LAUNCHER' > "$BIN_PATH"
 #!/usr/bin/env bash
 sed -i 's/\r$//' /etc/ddk-vps/menu.sh 2>/dev/null || true
@@ -303,7 +309,7 @@ chmod +x "$BIN_PATH"
 ln -sf "$BIN_PATH" /usr/local/bin/vps
 
 # ==============================================================================
-# COMPLETION SUMMARY BANNER
+# COMPLETION SUMMARY BANNER WITH AUTO-GENERATED RANDOM PASSWORD
 # ==============================================================================
 clear
 echo -e "${GREEN}${BOLD}"
@@ -313,9 +319,14 @@ echo "==========================================================================
 echo -e "${NC}"
 echo -e "${WHITE} [●] Server Domain     : ${CYAN}https://$DOMAIN${NC}"
 echo -e "${WHITE} [●] Server IPv4       : ${YELLOW}$IPV4${NC}"
-echo -e "${WHITE} [●] Web Panel URL     : ${GREEN}http://$IPV4:9090${NC} (or https://$DOMAIN:9090)"
-echo -e "${WHITE} [●] Default Admin User: ${WHITE}admin${NC}"
-echo -e "${WHITE} [●] Default Admin Pass: ${WHITE}admin123${NC} (Can change in Panel settings)"
+if [ "$DOMAIN" != "$IPV4" ]; then
+  echo -e "${WHITE} [●] Web Panel URL     : ${GREEN}https://$DOMAIN:9090${NC} (or http://$IPV4:9090)"
+else
+  echo -e "${WHITE} [●] Web Panel URL     : ${GREEN}http://$IPV4:9090${NC}"
+fi
+echo -e "${WHITE} [●] Default Admin User: ${CYAN}admin${NC}"
+echo -e "${WHITE} [●] Auto-Generated PW : ${YELLOW}${BOLD}$ADMIN_PASS${NC}"
+echo -e "${WHITE} [●] Credentials File  : ${PURPLE}/etc/ddk-vps/panel/credentials.json${NC}"
 echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
 echo -e "${BOLD}${YELLOW}  === ALL-IN-ONE ACTIVE PROTOCOLS & PORTS ===${NC}"
 echo -e "${WHITE} [1] OpenSSH Direct    : ${CYAN}Port 22${NC}"
@@ -325,7 +336,7 @@ echo -e "${WHITE} [4] Xray VMess WS     : ${CYAN}Port 8442, 2082${NC} (Path: /vm
 echo -e "${WHITE} [5] Xray VLESS WS     : ${CYAN}Port 8443, 443${NC}  (Path: /vless)"
 echo -e "${WHITE} [6] Xray VLESS Reality: ${CYAN}Port 8446${NC}      (Flow: xtls-rprx-vision)"
 echo -e "${WHITE} [7] Xray Trojan WS    : ${CYAN}Port 8445, 443${NC}  (Path: /trojan)"
-echo -e "${WHITE} [8] DDK Web Panel     : ${CYAN}Port 9090${NC}      (Real-time Web UI)"
+echo -e "${WHITE} [8] DDK Web Panel     : ${CYAN}Port 9090${NC}      (8-in-1 Cyber SPA)"
 echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
 echo -e "${GREEN}[✓] To launch terminal menu anytime, type: ${YELLOW}ddk${GREEN} or ${YELLOW}vps${NC}"
 echo "=============================================================================="
