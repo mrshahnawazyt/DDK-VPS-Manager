@@ -2,7 +2,7 @@
 # ==============================================================================
 # DDK VPS Manager 2 - Next-Gen Multi-Protocol Suite & Web Panel (Port 9090)
 # Repository: https://github.com/mrshahnawazyt/DDK-VPS-Manager
-# Protocols: SSH, Dropbear, SSH-WS, HAProxy, VMess, VLESS, Trojan, WireGuard
+# Protocols: Dropbear SSH, Python WS-Proxy, Xray (VMess/VLESS/Trojan), HAProxy, Nginx
 # License: MIT
 # ==============================================================================
 
@@ -22,6 +22,7 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 NC='\033[0m'
+BOLD='\033[1m'
 
 INSTALL_DIR="/etc/ddk-vps"
 BIN_PATH="/usr/local/bin/ddk"
@@ -30,7 +31,7 @@ REPO_NAME="${GH_REPO:-DDK-VPS-Manager}"
 BRANCH="${GH_BRANCH:-main}"
 
 clear
-echo -e "${CYAN}"
+echo -e "${CYAN}${BOLD}"
 cat << "EOF"
   ____  ____  _  __ __     ______  ____    __  __                                   ____  
  |  _ \|  _ \| |/ / \ \   / /  _ \/ ___|  |  \/  | __ _ _ __   __ _  __ _  ___ _ __|___ \ 
@@ -60,29 +61,109 @@ else
 fi
 echo -e "${GREEN}[OK]${NC} Detected OS: ${CYAN}$OS $VER${NC}"
 
-# Install all multi-protocol dependencies
-echo -e "${BLUE}[INFO]${NC} Installing multi-protocol core stack (HAProxy, Nginx, Dropbear, Python3, Certbot)..."
+# Detect Public IP
+IPV4=$(curl -s -4 icanhazip.com || curl -s -4 ifconfig.me || curl -s -4 ipinfo.io/ip || echo "127.0.0.1")
+echo -e "${GREEN}[OK]${NC} Public IPv4: ${YELLOW}$IPV4${NC}"
+
+# ==============================================================================
+# INTERACTIVE DOMAIN CONFIGURATION STEP
+# ==============================================================================
+echo ""
+echo -e "${YELLOW}==============================================================================${NC}"
+echo -e "${CYAN}${BOLD}            STEP 1: DOMAIN & SSL CONFIGURATION                               ${NC}"
+echo -e "${YELLOW}==============================================================================${NC}"
+echo -e "${WHITE}To enable Let's Encrypt SSL, Xray Reality/VLESS, and the Web Panel,${NC}"
+echo -e "${WHITE}please provide your pointed Domain or Subdomain (e.g. vps.example.com).${NC}"
+echo -e "${WHITE}Ensure an 'A' record in Cloudflare / DNS points to: ${GREEN}$IPV4${NC}"
+echo ""
+
+read -p "Enter Domain / Subdomain (or press Enter for IP mode): " USER_DOMAIN
+
+if [ -z "$USER_DOMAIN" ]; then
+  echo -e "${YELLOW}[!] No domain specified. Proceeding in IP mode with Self-Signed SSL.${NC}"
+  DOMAIN="$IPV4"
+else
+  echo -e "${BLUE}[INFO]${NC} Verifying DNS resolution for ${CYAN}$USER_DOMAIN${NC}..."
+  RESOLVED_IP=$(ping -c 1 "$USER_DOMAIN" 2>/dev/null | sed -n 's/.*(\([0-9.]*\)).*/\1/p' | head -n 1 || getent ahostsv4 "$USER_DOMAIN" 2>/dev/null | awk '{print $1}' | head -n 1 || echo "")
+  
+  if [ "$RESOLVED_IP" == "$IPV4" ]; then
+    echo -e "${GREEN}[SUCCESS]${NC} Domain ${CYAN}$USER_DOMAIN${NC} is successfully pointed to ${GREEN}$IPV4${NC}!"
+    DOMAIN="$USER_DOMAIN"
+  else
+    echo -e "${YELLOW}[WARNING]${NC} Domain '$USER_DOMAIN' resolves to '${RED}$RESOLVED_IP${NC}' (Server IP is ${GREEN}$IPV4${NC})."
+    echo -e "${WHITE}Tip: If using Cloudflare, set proxy status to 'DNS Only' (Grey Cloud).${NC}"
+    read -p "Do you want to continue with this domain anyway? [y/N]: " FORCE_DOM
+    if [[ "$FORCE_DOM" =~ ^[Yy]$ ]]; then
+      DOMAIN="$USER_DOMAIN"
+    else
+      echo -e "${YELLOW}[!] Falling back to IP mode.${NC}"
+      DOMAIN="$IPV4"
+    fi
+  fi
+fi
+
+# Save domain configuration
+mkdir -p "$INSTALL_DIR"
+echo "$DOMAIN" > "$INSTALL_DIR/domain.conf"
+echo -e "${GREEN}[OK]${NC} Configured domain: ${CYAN}$DOMAIN${NC}"
+
+# ==============================================================================
+# INSTALL PREREQUISITES & MULTI-PROTOCOL PACKAGES
+# ==============================================================================
+echo ""
+echo -e "${BLUE}[INFO]${NC} Installing system packages (Dropbear, HAProxy, Nginx, Python3, Certbot, Socat)..."
 if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y > /dev/null 2>&1
-  apt-get install -y curl wget jq tar ufw net-tools htop dropbear haproxy nginx python3 python3-pip certbot iptables socat git ca-certificates > /dev/null 2>&1
+  apt-get install -y curl wget jq tar net-tools htop dropbear haproxy nginx python3 python3-pip certbot iptables socat git ca-certificates openssl cron bc dnsutils > /dev/null 2>&1
 elif [[ "$OS" == "centos" || "$OS" == "almalinux" || "$OS" == "rocky" ]]; then
   yum update -y > /dev/null 2>&1
   yum install -y epel-release > /dev/null 2>&1 || true
-  yum install -y curl wget jq tar dropbear haproxy nginx python3 certbot iptables socat git ca-certificates > /dev/null 2>&1
+  yum install -y curl wget jq tar dropbear haproxy nginx python3 certbot iptables socat git ca-certificates openssl cronie bind-utils > /dev/null 2>&1
 fi
-echo -e "${GREEN}[OK]${NC} Multi-protocol packages installed."
+echo -e "${GREEN}[OK]${NC} System packages installed."
 
 # Setup Directories
-mkdir -p "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/modules"
 mkdir -p "$INSTALL_DIR/panel"
 mkdir -p "$INSTALL_DIR/configs"
+mkdir -p "$INSTALL_DIR/ssl"
 
-echo -e "${BLUE}[INFO]${NC} Installing Xray Core (VMess, VLESS, Trojan, Shadowsocks)..."
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh 2>/dev/null)" @ install > /dev/null 2>&1 || true
+# ==============================================================================
+# SSL CERTIFICATE ISSUANCE (ACME.SH / ZERO-SSL / SELF-SIGNED)
+# ==============================================================================
+echo ""
+echo -e "${BLUE}[INFO]${NC} Setting up SSL certificates..."
+systemctl stop nginx haproxy 2>/dev/null || true
 
-# Download or extract modules
+if [ "$DOMAIN" != "$IPV4" ]; then
+  echo -e "${BLUE}[INFO]${NC} Requesting Let's Encrypt SSL certificate for ${CYAN}$DOMAIN${NC} via acme.sh..."
+  curl -s https://get.acme.sh | sh -s email=admin@$DOMAIN >/dev/null 2>&1 || true
+  ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
+  ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256 --force >/dev/null 2>&1 || true
+  ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc \
+    --fullchain-file "$INSTALL_DIR/ssl/ddk.crt" \
+    --key-file "$INSTALL_DIR/ssl/ddk.key" >/dev/null 2>&1 || true
+fi
+
+# Fallback Self-Signed if needed
+if [ ! -f "$INSTALL_DIR/ssl/ddk.crt" ]; then
+  echo -e "${YELLOW}[INFO]${NC} Generating high-grade 2048-bit SSL certificate..."
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout "$INSTALL_DIR/ssl/ddk.key" \
+    -out "$INSTALL_DIR/ssl/ddk.crt" \
+    -subj "/C=US/ST=Cloud/L=Server/O=DDK-VPS/CN=$DOMAIN" >/dev/null 2>&1 || true
+fi
+
+# HAProxy combined PEM
+cat "$INSTALL_DIR/ssl/ddk.crt" "$INSTALL_DIR/ssl/ddk.key" > "$INSTALL_DIR/ssl/ddk.pem" 2>/dev/null || true
+echo -e "${GREEN}[OK]${NC} SSL Certificate active at $INSTALL_DIR/ssl/ddk.crt"
+
+# ==============================================================================
+# DOWNLOAD REPOSITORY MODULES
+# ==============================================================================
+echo ""
+echo -e "${BLUE}[INFO]${NC} Fetching DDK VPS Manager modules from GitHub..."
 download_module() {
   local file_path="$1"
   local dest_path="$2"
@@ -118,6 +199,78 @@ download_module "modules/bbr.sh" "$INSTALL_DIR/modules/bbr.sh"
 download_module "modules/system-optimizer.sh" "$INSTALL_DIR/modules/system-optimizer.sh"
 download_module "modules/backup.sh" "$INSTALL_DIR/modules/backup.sh"
 
+# ==============================================================================
+# EXECUTE PROTOCOL INSTALLATION & ACTIVATION
+# ==============================================================================
+echo ""
+echo -e "${BLUE}[INFO]${NC} Activating Dropbear SSH & Python WebSocket Proxies..."
+bash "$INSTALL_DIR/modules/ssh-ws.sh"
+
+echo -e "${BLUE}[INFO]${NC} Activating Xray Multi-Protocol Suite (VMess, VLESS Reality, Trojan)..."
+bash "$INSTALL_DIR/modules/xray-all-protocols.sh" "$DOMAIN"
+
+echo -e "${BLUE}[INFO]${NC} Configuring HAProxy & Nginx Multi-Port Router..."
+cat << 'HACONF' > /etc/haproxy/haproxy.cfg
+global
+    log /dev/log local0
+    tune.ssl.default-dh-param 2048
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    timeout connect 5000ms
+    timeout client  50000ms
+    timeout server  50000ms
+
+frontend http_front
+    bind *:80
+    mode http
+    acl is_ws hdr(Upgrade) -i websocket
+    use_backend ws_proxy_back if is_ws
+    default_backend panel_back
+
+frontend https_front
+    bind *:443 ssl crt /etc/ddk-vps/ssl/ddk.pem
+    mode http
+    acl is_vmess path_beg /vmess
+    acl is_vless path_beg /vless
+    acl is_trojan path_beg /trojan
+    acl is_ws hdr(Upgrade) -i websocket
+    use_backend xray_vmess if is_vmess
+    use_backend xray_vless if is_vless
+    use_backend xray_trojan if is_trojan
+    use_backend ws_proxy_back if is_ws
+    default_backend panel_back
+
+backend ws_proxy_back
+    mode http
+    server wsp 127.0.0.1:2082
+
+backend xray_vmess
+    mode http
+    server xvmess 127.0.0.1:8442
+
+backend xray_vless
+    mode http
+    server xvless 127.0.0.1:8443
+
+backend xray_trojan
+    mode http
+    server xtrojan 127.0.0.1:8445
+
+backend panel_back
+    mode http
+    server webp 127.0.0.1:9090
+HACONF
+
+systemctl restart haproxy 2>/dev/null || true
+
+echo -e "${BLUE}[INFO]${NC} Optimizing TCP BBR & System Buffers..."
+bash "$INSTALL_DIR/modules/bbr.sh" >/dev/null 2>&1 || true
+bash "$INSTALL_DIR/modules/system-optimizer.sh" >/dev/null 2>&1 || true
+
 # Setup Systemd Web Panel Service (Port 9090)
 cat << 'SYSTEMD' > /etc/systemd/system/ddk-panel.service
 [Unit]
@@ -149,10 +302,34 @@ LAUNCHER
 chmod +x "$BIN_PATH"
 ln -sf "$BIN_PATH" /usr/local/bin/vps
 
-IPV4=$(curl -s -4 icanhazip.com || echo "YOUR_VPS_IP")
-echo -e "${GREEN}[SUCCESS]${NC} Multi-Protocol VPS Suite Installed!"
-echo -e "${WHITE}Web Panel running at: ${CYAN}http://$IPV4:9090${NC}"
-echo -e "${WHITE}Terminal Dashboard command: ${YELLOW}ddk${WHITE} or ${YELLOW}vps${NC}"
+# ==============================================================================
+# COMPLETION SUMMARY BANNER
+# ==============================================================================
+clear
+echo -e "${GREEN}${BOLD}"
+echo "=============================================================================="
+echo "          DDK VPS MANAGER 2 - INSTALLATION COMPLETED SUCCESSFULLY             "
+echo "=============================================================================="
+echo -e "${NC}"
+echo -e "${WHITE} [●] Server Domain     : ${CYAN}https://$DOMAIN${NC}"
+echo -e "${WHITE} [●] Server IPv4       : ${YELLOW}$IPV4${NC}"
+echo -e "${WHITE} [●] Web Panel URL     : ${GREEN}http://$IPV4:9090${NC} (or https://$DOMAIN:9090)"
+echo -e "${WHITE} [●] Default Admin User: ${WHITE}admin${NC}"
+echo -e "${WHITE} [●] Default Admin Pass: ${WHITE}admin123${NC} (Can change in Panel settings)"
+echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
+echo -e "${BOLD}${YELLOW}  === ALL-IN-ONE ACTIVE PROTOCOLS & PORTS ===${NC}"
+echo -e "${WHITE} [1] OpenSSH Direct    : ${CYAN}Port 22${NC}"
+echo -e "${WHITE} [2] Dropbear SSH      : ${CYAN}Port 109, 447${NC}"
+echo -e "${WHITE} [3] Python SSH-WS     : ${CYAN}Port 80, 443, 2082, 2083, 2084, 2085, 8880${NC}"
+echo -e "${WHITE} [4] Xray VMess WS     : ${CYAN}Port 8442, 2082${NC} (Path: /vmess)"
+echo -e "${WHITE} [5] Xray VLESS WS     : ${CYAN}Port 8443, 443${NC}  (Path: /vless)"
+echo -e "${WHITE} [6] Xray VLESS Reality: ${CYAN}Port 8446${NC}      (Flow: xtls-rprx-vision)"
+echo -e "${WHITE} [7] Xray Trojan WS    : ${CYAN}Port 8445, 443${NC}  (Path: /trojan)"
+echo -e "${WHITE} [8] DDK Web Panel     : ${CYAN}Port 9090${NC}      (Real-time Web UI)"
+echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
+echo -e "${GREEN}[✓] To launch terminal menu anytime, type: ${YELLOW}ddk${GREEN} or ${YELLOW}vps${NC}"
+echo "=============================================================================="
+echo ""
 sleep 2
 
 bash "$INSTALL_DIR/menu.sh"

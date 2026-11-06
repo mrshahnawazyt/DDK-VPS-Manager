@@ -1,7 +1,7 @@
 # DDK VPS Manager 2 - Multi-Protocol Suite & Web Panel (Port 9090)
 
 > **Official Repository**: https://github.com/mrshahnawazyt/DDK-VPS-Manager  
-> **Web Panel Dashboard**: `http://YOUR_VPS_IP:9090`  
+> **Web Panel Dashboard**: `http://YOUR_VPS_IP:9090` (or `https://YOUR_DOMAIN:9090`)  
 > **Terminal Control Command**: `ddk` or `vps`  
 > **Default Admin Account**: Username: `admin` | Port: `9090`
 
@@ -23,54 +23,60 @@ export GH_TOKEN=YOUR_GITHUB_TOKEN GH_REPO=DDK-VPS-Manager GH_OWNER=mrshahnawazyt
 
 ---
 
-## 🌐 Supported Protocols & Listening Ports Reference
+## 🛠️ Step-by-Step Installation Workflow
 
-This suite installs and automatically configures a high-performance multiplexed proxy stack:
+1. **System & Public IP Check**: The installer verifies OS compatibility and fetches your server's public IPv4.
+2. **Interactive Domain Setup**:
+   - The installer prompts: `Enter Domain / Subdomain (e.g. vps.example.com):`
+   - It performs an automated DNS lookup verifying that your Domain points to the VPS IPv4.
+3. **Automated SSL Certificate (acme.sh)**:
+   - Automated issuance of Let's Encrypt ECC SSL certificates for your domain.
+   - Installs certificate to `/etc/ddk-vps/ssl/ddk.crt` and generates combined PEM for HAProxy.
+4. **All-in-One Multi-Protocol Setup**:
+   - **OpenSSH** on port `22`.
+   - **Dropbear SSH** on ports `109` and `447`.
+   - **Python SSH-WebSocket Proxy** on ports `80`, `443`, `2082`, `2083`, `2084`, `2085`, `8880`.
+   - **Xray Core Multi-Protocol**:
+     - VMess WebSocket on port `8442` (Path: `/vmess`)
+     - VLESS WebSocket on port `8443` (Path: `/vless`)
+     - VLESS Reality Vision on port `8446` (`xtls-rprx-vision`)
+     - Trojan WebSocket on port `8445` (Path: `/trojan`)
+     - Trojan gRPC on port `8447` (`trojan-grpc`)
+   - **HAProxy Multiplexer**: Multiplexes ports `80` and `443` to forward HTTP/WS traffic to Dropbear, Xray, and the Web Panel.
+   - **TCP BBR Booster & 4GB Swap**: Activated for maximum network throughput.
+5. **DDK Web Panel on Port 9090**:
+   - Launches standalone Python 3 service with embedded cyber-dark dashboard (no directory listings).
+
+---
+
+## 🌐 Supported Protocols & Listening Ports Reference
 
 | Service / Protocol | Port(s) | Description |
 | :--- | :--- | :--- |
 | **OpenSSH** | `22` | Native Linux administrative shell |
 | **Dropbear SSH** | `109, 447` | Lightweight high-speed SSH daemon |
-| **SSH-WebSocket (WS-Proxy)** | `80, 443, 2082, 2083, 2084, 2085` | Cloudflare CDN-compatible WebSocket proxy for SSH |
-| **VMess (WebSocket / gRPC)** | `8442, 2082` | High-security multi-client VMess proxy |
-| **VLESS (XTLS Reality / WS)** | `8443, 8446` | Ultra-fast censorship-resistant VLESS Reality Vision |
-| **Trojan (WS / gRPC)** | `8445, 443` | TLS-camouflaged Trojan protocol |
+| **SSH-WebSocket (WS-Proxy)** | `80, 443, 2082, 2083, 2084, 2085, 8880` | Cloudflare CDN HTTP/HTTPS WebSocket tunneling for SSH |
+| **VMess (WebSocket / gRPC)** | `8442, 2082` | Obfuscated VMess proxy with multi-client support |
+| **VLESS (Reality XTLS / WS)** | `8443, 8446` | Ultra-fast censorship-resistant VLESS Reality Vision |
+| **Trojan (WS / gRPC)** | `8445, 443, 8447` | TLS-camouflaged Trojan protocol |
 | **HAProxy Multiplexer** | `80, 443` | High-availability load balancer offloading HTTP/HTTPS traffic |
 | **Nginx Web Server** | `8080, 8081` | SSL certificate termination and reverse proxy |
 | **DDK Web Panel** | `9090` | Real-time web browser control dashboard (Python 3 daemon) |
 
 ---
 
-## 🖥️ Web Panel Features (Port 9090)
-
-- **Real-Time Live Dashboard**: Displays live gauges for CPU load, RAM utilization, Disk space, and Network traffic.
-- **SSH Accounts Manager**: Create and manage SSH/Dropbear accounts with IP limits, data transfer quotas, and expiry timers.
-- **Xray Multi-Protocol Manager**: Instant generation of VMess, VLESS, and Trojan accounts with 1-click subscription links and mobile QR codes.
-- **Service Controller**: Restart, stop, or inspect logs for HAProxy, Nginx, Dropbear, Xray, and WS-Proxy.
-- **Network Speedtest**: Run on-demand server latency and throughput benchmarks.
-- **Anti-Bufferbloat Ping QoS**: Optimize network queues to prevent latency spikes during high bandwidth usage.
-- **Telegram Bot Notifications**: Automated Telegram alerts for account expiration and server resource warnings.
-
----
-
 ## 🚀 Post-Installation Usage
 
-1. **Open the Web Panel in your browser**:
+1. **Access Web Panel**:
    ```text
    http://YOUR_SERVER_IP:9090
+   # or
+   https://YOUR_DOMAIN:9090
    ```
 
-2. **Open the Control Menu in your VPS terminal**:
+2. **Access Terminal Menu**:
    ```bash
    ddk
    # or
    vps
-   ```
-
-3. **Check Service Status**:
-   ```bash
-   systemctl status ddk-panel
-   systemctl status xray
-   systemctl status dropbear
-   systemctl status haproxy
    ```
