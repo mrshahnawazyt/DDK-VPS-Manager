@@ -191,6 +191,61 @@ def provision_ssh_account(username: str, duration_days: int) -> Tuple[bool, str,
     return True, password, expires_on
 
 
+def ssh_account_runtime(username: str, expires_on: str, panel_locked: bool) -> Dict[str, Any]:
+    """Read the actual local account state instead of trusting panel data alone."""
+    record: Dict[str, Any] = {
+        "exists": False,
+        "home": f"/home/{username}",
+        "shell": "—",
+        "state": "removed",
+        "online": 0,
+    }
+    rc, passwd_row = command(["getent", "passwd", username])
+    if rc != 0 or not passwd_row:
+        return record
+    fields = passwd_row.split(":")
+    record["exists"] = True
+    if len(fields) >= 7:
+        record["home"] = fields[5] or record["home"]
+        record["shell"] = fields[6] or "—"
+
+    locked = panel_locked
+    lock_rc, lock_info = command(["passwd", "--status", username])
+    if lock_rc == 0:
+        status_parts = lock_info.split()
+        locked = locked or (len(status_parts) > 1 and status_parts[1].upper().startswith("L"))
+    try:
+        expired = date.fromisoformat(expires_on) < date.today()
+    except ValueError:
+        expired = False
+    if expired:
+        record["state"] = "expired"
+    elif locked:
+        record["state"] = "locked"
+    else:
+        record["state"] = "active"
+
+    who_rc, who_output = command(["who"])
+    if who_rc == 0 and who_output:
+        record["online"] = sum(1 for line in who_output.splitlines() if line.split()[:1] == [username])
+    return record
+
+
+def renew_ssh_account(username: str, current_expiry: str, duration_days: int) -> Tuple[bool, str]:
+    """Extend an existing managed Linux account without changing its password."""
+    try:
+        current = date.fromisoformat(current_expiry)
+    except ValueError:
+        current = date.today()
+    new_expiry = (max(date.today(), current) + timedelta(days=duration_days)).isoformat()
+    rc, output = command(["chage", "--expiredate", new_expiry, username], timeout=10)
+    if rc != 0:
+        return False, output[:120] or "Could not update account expiry."
+    with connection() as db:
+        db.execute("UPDATE ssh_accounts SET expires_on = ? WHERE username = ?", (new_expiry, username))
+    return True, new_expiry
+
+
 def service_state(unit: str) -> str:
     rc, output = command(["systemctl", "is-active", unit])
     if rc == 0:
@@ -271,7 +326,7 @@ def fmt_time(timestamp: int) -> str:
 CSS = """
 :root{color-scheme:dark;--bg:#090d0e;--panel:#12191a;--panel2:#182122;--line:#293637;--text:#e8f1f1;--muted:#8ba2a3;--accent:#52d9dc;--good:#5de28b;--warn:#efbe65;--bad:#fc7d7d}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{display:grid;grid-template-columns:235px 1fr;min-height:100vh}.brand{padding:21px 18px;border-bottom:1px solid var(--line);letter-spacing:.05em;font-weight:800;color:var(--accent)}.brand span{color:var(--text);font-weight:500}.side{border-right:1px solid var(--line);background:#0c1112}.nav{padding:13px 9px}.nav a{display:block;padding:11px 12px;border-radius:7px;color:var(--muted);text-decoration:none;margin:3px 0}.nav a:hover,.nav a.active{color:var(--accent);background:#132526}.side-foot{position:fixed;bottom:16px;left:18px;color:var(--muted);font-size:12px}.main{min-width:0}.top{height:65px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px}.crumb{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.user{color:var(--muted)}.user b{color:var(--text)}.content{max-width:1300px;margin:auto;padding:26px}.title-row{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:21px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin:0 0 15px}.grid{display:grid;gap:15px;grid-template-columns:repeat(4,minmax(0,1fr))}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.metric{font-size:27px;font-weight:700;margin:8px 0}.muted{color:var(--muted);font-size:12px}.status{border-radius:999px;padding:4px 8px;font-size:11px;white-space:nowrap}.running{background:#123523;color:var(--good)}.stopped,.not-installed{background:#272d2d;color:var(--muted)}.failed{background:#482022;color:var(--bad)}.unknown{background:#43351b;color:var(--warn)}.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:580px}.table th{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;text-align:left}.table th,.table td{border-bottom:1px solid var(--line);padding:12px 8px}.table td:first-child,.table th:first-child{padding-left:0}.table td:last-child,.table th:last-child{padding-right:0}.button{border:0;border-radius:7px;padding:9px 12px;background:var(--accent);color:#062123;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}.button.subtle{background:#253031;color:var(--text)}.button.danger{background:#4c2628;color:#ffdada}.button:disabled{opacity:.45;cursor:not-allowed}.button-row{display:flex;gap:7px;flex-wrap:wrap}.notice{border:1px solid #27585a;background:#113033;color:#b9f7f8;border-radius:8px;padding:11px 13px;margin-bottom:17px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}input,select{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);background:#0a1011;color:var(--text)}.login{min-height:100vh;display:grid;place-items:center;padding:20px}.login-box{width:min(410px,100%);padding:28px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.login-box h1{color:var(--accent);margin-bottom:8px}.login-box p{color:var(--muted);margin-bottom:22px}.login-box form>*{margin-top:13px}.small{font-size:12px}.pill{font-size:11px;padding:3px 7px;border:1px solid var(--line);border-radius:99px;color:var(--muted)}@media(max-width:850px){.shell{display:block}.side{position:sticky;top:0;z-index:2;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:12px 16px}.nav{display:flex;gap:4px;overflow:auto;padding:7px 9px}.nav a{white-space:nowrap;padding:8px 10px}.side-foot{display:none}.top{height:52px;padding:0 16px}.content{padding:17px}.grid,.grid.two{grid-template-columns:1fr 1fr}.title-row{align-items:flex-start;flex-direction:column}}@media(max-width:500px){.grid,.grid.two,.form-grid{grid-template-columns:1fr}.metric{font-size:23px}.user{font-size:12px}}
 """
-CSS += ".status.active{background:#123523;color:var(--good)}.status.locked{background:#482022;color:var(--bad)}"
+CSS += ".status.active{background:#123523;color:var(--good)}.status.locked,.status.expired,.status.removed{background:#482022;color:var(--bad)}.button-row form{display:inline}code{color:#b9f7f8;word-break:break-all}pre.log{white-space:pre-wrap;overflow:auto;max-height:65vh;background:#0a1011;border:1px solid var(--line);padding:14px;border-radius:8px;color:#c9d6d7}"
 
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -394,6 +449,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.ssh_accounts_page(user)
         elif path == "/services":
             self.services_page(user)
+        elif path == "/service-logs":
+            self.service_logs_page(user)
         elif path == "/settings":
             self.settings_page(user)
         elif path == "/admins":
@@ -457,6 +514,9 @@ class PanelHandler(BaseHTTPRequestHandler):
         info = system_snapshot()
         states = [service_state(unit) for unit, _, _ in SERVICE_CATALOG]
         running = sum(1 for state in states if state == "running")
+        with connection() as db:
+            ssh_total = int(db.execute("SELECT COUNT(*) FROM ssh_accounts").fetchone()[0])
+            ssh_locked = int(db.execute("SELECT COUNT(*) FROM ssh_accounts WHERE locked = 1").fetchone()[0])
         mem = f"{human_bytes(int(info['memory_used']))} / {human_bytes(int(info['memory_total']))}"
         disk = f"{human_bytes(int(info['disk_used']))} / {human_bytes(int(info['disk_total']))}"
         service_rows = "".join(
@@ -465,7 +525,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         )
         content = f"""{self.notice()}<div class='title-row'><div><h1>Dashboard</h1><div class='muted'>Live overview of this VPS</div></div><a class='button subtle' href='/services'>Manage services</a></div>
 <div class='grid'><article class='card'><h2>Load average</h2><div class='metric'>{esc(info['cpu'])}</div><div class='muted'>1-minute CPU load</div></article><article class='card'><h2>Memory</h2><div class='metric'>{esc(mem)}</div><div class='muted'>used / total</div></article><article class='card'><h2>Disk</h2><div class='metric'>{esc(disk)}</div><div class='muted'>root filesystem</div></article><article class='card'><h2>Uptime</h2><div class='metric'>{esc(info['uptime'])}</div><div class='muted'>since last reboot</div></article></div>
-<div class='grid two' style='margin-top:15px'><article class='card'><h2>Managed services</h2><div class='metric'>{running} / {len(SERVICE_CATALOG)}</div><div class='muted'>running from the approved local list</div></article><article class='card'><h2>Panel address</h2><div class='metric' style='font-size:18px'>{esc(get_setting('domain', 'Not set'))}:{esc(get_setting('port', '9090'))}</div><div class='muted'>Set a domain, then add HTTPS before public use.</div></article></div>
+<div class='grid two' style='margin-top:15px'><article class='card'><h2>Managed services</h2><div class='metric'>{running} / {len(SERVICE_CATALOG)}</div><div class='muted'>running from the approved local list</div></article><article class='card'><h2>SSH accounts</h2><div class='metric'>{ssh_total}</div><div class='muted'>{ssh_locked} locked · <a href='/ssh-accounts'>manage accounts</a></div></article><article class='card'><h2>Panel address</h2><div class='metric' style='font-size:18px'>{esc(get_setting('domain', 'Not set'))}:{esc(get_setting('port', '9090'))}</div><div class='muted'>Set a domain, then add HTTPS before public use.</div></article></div>
 <article class='card' style='margin-top:15px'><h2>Services</h2><div class='table-wrap'><table class='table'><thead><tr><th>Service</th><th>Status</th><th>Purpose</th></tr></thead><tbody>{service_rows}</tbody></table></div></article>"""
         self.send_html(self.page("Dashboard", content, user, "dashboard"))
 
@@ -478,22 +538,30 @@ class PanelHandler(BaseHTTPRequestHandler):
         can_manage = user["role"] == "super_admin"
         rows = []
         for account in accounts:
-            state = "locked" if account["locked"] else "active"
+            runtime = ssh_account_runtime(account["username"], account["expires_on"], bool(account["locked"]))
+            state = runtime["state"]
             actions = "<span class='muted'>View-only role</span>"
             if can_manage:
-                action = "unlock" if account["locked"] else "lock"
-                caption = "Unlock" if account["locked"] else "Lock"
+                action = "unlock" if state == "locked" else "lock"
+                caption = "Unlock" if state == "locked" else "Lock"
                 actions = (
-                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'>"
+                    f"<div class='button-row'><form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'>"
                     f"<input type='hidden' name='username' value='{esc(account['username'])}'>"
                     f"<button class='button subtle small' name='action' value='{action}'>{caption}</button></form>"
+                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{esc(account['username'])}'>"
+                    f"<button class='button subtle small' name='action' value='reset-password'>New password</button></form>"
+                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{esc(account['username'])}'>"
+                    f"<input name='days' value='30' inputmode='numeric' aria-label='Additional days' style='width:66px;padding:7px'><button class='button subtle small' name='action' value='renew'>Renew</button></form>"
+                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='username' value='{esc(account['username'])}'>"
+                    f"<button class='button danger small' name='action' value='remove'>Remove</button></form></div>"
                 )
             rows.append(
-                f"<tr><td><b>{esc(account['username'])}</b><div class='muted'>SSH port 22</div></td>"
-                f"<td><span class='status {state}'>{state}</span></td><td>{esc(account['expires_on'])}</td>"
+                f"<tr><td><b>{esc(account['username'])}</b><div class='muted'>SSH port 22 · shell {esc(runtime['shell'])}</div></td>"
+                f"<td><code>{esc(runtime['home'])}</code></td><td><span class='status {state}'>{state}</span>"
+                f"<div class='muted'>{runtime['online']} session(s) online</div></td><td>{esc(account['expires_on'])}</td>"
                 f"<td>{esc(fmt_time(account['created_at']))}</td><td>{actions}</td></tr>"
             )
-        table = "".join(rows) or "<tr><td colspan='5' class='muted'>No SSH accounts created from this panel yet.</td></tr>"
+        table = "".join(rows) or "<tr><td colspan='6' class='muted'>No SSH accounts created from this panel yet.</td></tr>"
         if can_manage:
             create_card = f"""<article class='card'><h2>Create SSH account</h2>
 <form method='post' action='/ssh-create'><input type='hidden' name='csrf' value='{csrf}'>
@@ -504,8 +572,8 @@ class PanelHandler(BaseHTTPRequestHandler):
         else:
             create_card = "<article class='card'><h2>SSH accounts</h2><p class='muted'>Only a super administrator can create SSH accounts.</p></article>"
         content = f"""{self.notice()}<div class='title-row'><div><h1>SSH accounts</h1><div class='muted'>Manage local SSH users created by DDK VPS Manager.</div></div></div>
-<div class='grid two'>{create_card}<article class='card'><h2>Connection details</h2><p class='muted'>Host: <b>{esc(get_setting('domain', 'your-vps-ip'))}</b><br>Port: <b>22</b><br>Expiry is enforced by the server. Locked accounts cannot sign in.</p></article></div>
-<article class='card' style='margin-top:15px'><h2>Created accounts</h2><div class='table-wrap'><table class='table'><thead><tr><th>Username</th><th>Status</th><th>Expiry</th><th>Created</th><th>Action</th></tr></thead><tbody>{table}</tbody></table></div></article>"""
+<div class='grid two'>{create_card}<article class='card'><h2>Connection details</h2><p class='muted'>Host: <b>{esc(get_setting('domain', 'your-vps-ip'))}</b><br>Port: <b>22</b><br>Each account shows its actual Linux home directory, shell, lock/expiry state and logged-in session count.</p></article></div>
+<article class='card' style='margin-top:15px'><h2>Created accounts</h2><div class='table-wrap'><table class='table'><thead><tr><th>Username</th><th>Home directory</th><th>Status</th><th>Expiry</th><th>Created</th><th>Actions</th></tr></thead><tbody>{table}</tbody></table></div></article>"""
         self.send_html(self.page("SSH accounts", content, user, "ssh"))
 
     def ssh_create(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
@@ -535,23 +603,58 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         username = form.get("username", "")
         action = form.get("action", "")
-        if not re.fullmatch(r"[a-z][a-z0-9_-]{2,31}", username) or action not in {"lock", "unlock"}:
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{2,31}", username) or action not in {"lock", "unlock", "reset-password", "renew", "remove"}:
             self.redirect("/ssh-accounts?notice=" + quote("That SSH account action is not allowed."))
             return
         with connection() as db:
-            account = db.execute("SELECT username FROM ssh_accounts WHERE username = ?", (username,)).fetchone()
+            account = db.execute("SELECT username, expires_on FROM ssh_accounts WHERE username = ?", (username,)).fetchone()
         if not account:
             self.redirect("/ssh-accounts?notice=" + quote("This account is not managed by DDK VPS Manager."))
             return
-        flag = "--lock" if action == "lock" else "--unlock"
-        rc, output = command(["usermod", flag, username], timeout=10)
+        if action in {"lock", "unlock"}:
+            flag = "--lock" if action == "lock" else "--unlock"
+            rc, output = command(["usermod", flag, username], timeout=10)
+            if rc != 0:
+                self.redirect("/ssh-accounts?notice=" + quote(f"Could not {action} account: {output[:120]}"))
+                return
+            with connection() as db:
+                db.execute("UPDATE ssh_accounts SET locked = ? WHERE username = ?", (1 if action == "lock" else 0, username))
+            audit(user["username"], f"ssh_account_{action}", f"{action.title()}ed SSH account {username}", self.client_address[0])
+            self.redirect("/ssh-accounts?notice=" + quote(f"SSH account {username} {action}ed."))
+            return
+        if action == "reset-password":
+            password = secrets.token_urlsafe(14)
+            rc, output = command_with_input(["chpasswd"], f"{username}:{password}\n")
+            if rc != 0:
+                self.redirect("/ssh-accounts?notice=" + quote(f"Could not reset password: {output[:120]}"))
+                return
+            audit(user["username"], "ssh_account_password_reset", f"Reset SSH account password for {username}", self.client_address[0])
+            self.set_flash(f"New password for {username}: {password}. Save it now; it is not shown again.")
+            self.redirect("/ssh-accounts")
+            return
+        if action == "renew":
+            try:
+                days = int(form.get("days", "0"))
+            except ValueError:
+                days = 0
+            if not 1 <= days <= 3650:
+                self.redirect("/ssh-accounts?notice=" + quote("Renewal must be from 1 to 3650 days."))
+                return
+            updated, result = renew_ssh_account(username, account["expires_on"], days)
+            if not updated:
+                self.redirect("/ssh-accounts?notice=" + quote(f"Could not renew account: {result}"))
+                return
+            audit(user["username"], "ssh_account_renew", f"Renewed SSH account {username} until {result}", self.client_address[0])
+            self.redirect("/ssh-accounts?notice=" + quote(f"SSH account {username} renewed until {result}. Unlock it too if it was locked."))
+            return
+        rc, output = command(["userdel", "--remove", username], timeout=20)
         if rc != 0:
-            self.redirect("/ssh-accounts?notice=" + quote(f"Could not {action} account: {output[:120]}"))
+            self.redirect("/ssh-accounts?notice=" + quote(f"Could not remove account: {output[:120]}"))
             return
         with connection() as db:
-            db.execute("UPDATE ssh_accounts SET locked = ? WHERE username = ?", (1 if action == "lock" else 0, username))
-        audit(user["username"], f"ssh_account_{action}", f"{action.title()}ed SSH account {username}", self.client_address[0])
-        self.redirect("/ssh-accounts?notice=" + quote(f"SSH account {username} {action}ed."))
+            db.execute("DELETE FROM ssh_accounts WHERE username = ?", (username,))
+        audit(user["username"], "ssh_account_remove", f"Removed managed SSH account {username}", self.client_address[0])
+        self.redirect("/ssh-accounts?notice=" + quote(f"SSH account {username} and its home directory were removed."))
 
     def services_page(self, user: Dict[str, Any]) -> None:
         csrf = self.csrf(user)
@@ -568,7 +671,7 @@ class PanelHandler(BaseHTTPRequestHandler):
                 action_form = f"<form method='post' action='/service-action' class='button-row'><input type='hidden' name='csrf' value='{csrf}'><input type='hidden' name='unit' value='{unit}'>{buttons}</form>"
             else:
                 action_form = "<span class='muted'>View-only role</span>"
-            rows.append(f"<tr><td><b>{esc(label)}</b><div class='muted'>{esc(detail)}</div></td><td><span class='status {esc(state.replace(' ', '-'))}'>{esc(state)}</span></td><td>{action_form}</td></tr>")
+            rows.append(f"<tr><td><b>{esc(label)}</b><div class='muted'>{esc(detail)}</div></td><td><span class='status {esc(state.replace(' ', '-'))}'>{esc(state)}</span></td><td>{action_form} <a class='button subtle small' href='/service-logs?unit={quote(unit)}'>Logs</a></td></tr>")
         port_rows = "".join(f"<tr><td>{esc(addr)}</td><td>{esc(kind)}</td></tr>" for addr, kind in listening_ports()) or "<tr><td colspan='2' class='muted'>No port data available.</td></tr>"
         proxy_form = ""
         if can_manage:
@@ -579,6 +682,18 @@ class PanelHandler(BaseHTTPRequestHandler):
 <div class='grid two'><article class='card'><h2>Python proxy integration</h2><p class='muted'>Controls the optional <span class='pill'>ddk-vps-manager-python-proxy.service</span> if you have installed and reviewed it. This panel only saves the requested port and controls that named service.</p>{proxy_form}</article><article class='card'><h2>Service control</h2><div class='table-wrap'><table class='table'><thead><tr><th>Service</th><th>Status</th><th>Actions</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div></article></div>
 <article class='card' style='margin-top:15px'><h2>Listening TCP ports</h2><div class='table-wrap'><table class='table'><thead><tr><th>Address</th><th>Type</th></tr></thead><tbody>{port_rows}</tbody></table></div></article>"""
         self.send_html(self.page("Running services", content, user, "services"))
+
+    def service_logs_page(self, user: Dict[str, Any]) -> None:
+        unit = parse_qs(urlparse(self.path).query).get("unit", [""])[0]
+        allowed = {item[0] for item in SERVICE_CATALOG}
+        if unit not in allowed:
+            self.redirect("/services?notice=" + quote("That service is not in the approved local list."))
+            return
+        rc, output = command(["journalctl", "-u", unit, "-n", "120", "--no-pager", "-o", "short-iso"], timeout=12)
+        if rc != 0 and not output:
+            output = "No journal output is available for this service."
+        content = f"""<div class='title-row'><div><h1>Service logs</h1><div class='muted'>{esc(unit)} · latest 120 lines</div></div><a class='button subtle' href='/services'>Back to services</a></div><article class='card'><pre class='log'>{esc(output or 'No log entries.')}</pre></article>"""
+        self.send_html(self.page("Service logs", content, user, "services"))
 
     def service_action(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
         if not self.require_super_admin(user):
