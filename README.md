@@ -8,6 +8,7 @@ Supported Ubuntu releases: **20.04, 22.04, 24.04, 26.04 LTS and 26.10**. For a p
 
 - Password-protected, mobile-friendly dashboard
 - CPU, RAM, disk, uptime, listening-port and service status
+- VPS details page with OS, kernel, CPU, disks, network interfaces and top processes
 - Local SSH account management: create accounts, show the actual home directory and shell, lock/unlock, renew expiry, reset a password and remove a managed account
 - Start, stop, restart and view logs for a limited list of local services
 - Panel roles and audit log

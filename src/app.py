@@ -315,6 +315,71 @@ def listening_ports() -> List[Tuple[str, str]]:
     return rows
 
 
+def vps_details() -> Dict[str, Any]:
+    """Collect read-only operating-system information for the VPS statistics page."""
+    os_name = "Unknown Linux"
+    try:
+        for line in Path("/etc/os-release").read_text().splitlines():
+            if line.startswith("PRETTY_NAME="):
+                os_name = line.split("=", 1)[1].strip().strip('"')
+                break
+    except OSError:
+        pass
+    cpu_model = "Unknown"
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.lower().startswith("model name"):
+                cpu_model = line.split(":", 1)[1].strip()
+                break
+    except OSError:
+        pass
+    virt_rc, virt = command(["systemd-detect-virt"], timeout=4)
+    disks: List[Dict[str, str]] = []
+    disk_rc, disk_output = command(["df", "-PT", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs"], timeout=6)
+    if disk_rc == 0:
+        for line in disk_output.splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 7:
+                disks.append({"device": parts[0], "type": parts[1], "used": parts[3], "total": parts[2], "percent": parts[5], "mount": parts[6]})
+    addresses: Dict[str, List[str]] = {}
+    ip_rc, ip_output = command(["ip", "-o", "addr", "show"], timeout=5)
+    if ip_rc == 0:
+        for line in ip_output.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[2] in {"inet", "inet6"} and not parts[3].startswith("fe80:"):
+                addresses.setdefault(parts[1], []).append(parts[3])
+    interfaces: List[Dict[str, Any]] = []
+    try:
+        for line in Path("/proc/net/dev").read_text().splitlines()[2:]:
+            name, values = line.split(":", 1)
+            counters = values.split()
+            name = name.strip()
+            if name == "lo" or len(counters) < 9:
+                continue
+            interfaces.append({"name": name, "rx": int(counters[0]), "tx": int(counters[8]), "addresses": addresses.get(name, [])})
+    except (OSError, ValueError):
+        pass
+    processes: List[Dict[str, str]] = []
+    ps_rc, ps_output = command(["ps", "-eo", "pid=,comm=,pcpu=,pmem=", "--sort=-pcpu"], timeout=6)
+    if ps_rc == 0:
+        for line in ps_output.splitlines()[:12]:
+            parts = line.split()
+            if len(parts) >= 4:
+                processes.append({"pid": parts[0], "name": parts[1], "cpu": parts[2], "memory": parts[3]})
+    return {
+        "hostname": os.uname().nodename if hasattr(os, "uname") else "Unknown",
+        "os": os_name,
+        "kernel": os.uname().release if hasattr(os, "uname") else "Unknown",
+        "architecture": os.uname().machine if hasattr(os, "uname") else "Unknown",
+        "cpu": cpu_model,
+        "cores": os.cpu_count() or 0,
+        "virtualization": virt.strip() if virt_rc == 0 and virt.strip() else "Unknown",
+        "disks": disks,
+        "interfaces": interfaces,
+        "processes": processes,
+    }
+
+
 def esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -405,7 +470,7 @@ class PanelHandler(BaseHTTPRequestHandler):
         if not user:
             return f"<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>{esc(title)}</title><style>{CSS}</style></head><body>{content}</body></html>"
         links = (("dashboard", "Dashboard", "/"), ("ssh", "SSH accounts", "/ssh-accounts"), ("services", "Running services", "/services"),
-                 ("settings", "Settings", "/settings"), ("admins", "Panel admins", "/admins"),
+                 ("vps", "VPS stats", "/vps-stats"), ("settings", "Settings", "/settings"), ("admins", "Panel admins", "/admins"),
                  ("activity", "Activity log", "/activity"))
         nav = "".join(f"<a class='{('active' if key == active else '')}' href='{url}'>{label}</a>" for key, label, url in links)
         return f"""<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>{esc(title)} · DDK VPS Manager</title><style>{CSS}</style></head>
@@ -451,6 +516,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.services_page(user)
         elif path == "/service-logs":
             self.service_logs_page(user)
+        elif path == "/vps-stats":
+            self.vps_stats_page(user)
         elif path == "/settings":
             self.settings_page(user)
         elif path == "/admins":
@@ -694,6 +761,26 @@ class PanelHandler(BaseHTTPRequestHandler):
             output = "No journal output is available for this service."
         content = f"""<div class='title-row'><div><h1>Service logs</h1><div class='muted'>{esc(unit)} · latest 120 lines</div></div><a class='button subtle' href='/services'>Back to services</a></div><article class='card'><pre class='log'>{esc(output or 'No log entries.')}</pre></article>"""
         self.send_html(self.page("Service logs", content, user, "services"))
+
+    def vps_stats_page(self, user: Dict[str, Any]) -> None:
+        details = vps_details()
+        disk_rows = "".join(
+            f"<tr><td><b>{esc(item['mount'])}</b><div class='muted'>{esc(item['device'])} · {esc(item['type'])}</div></td><td>{esc(item['used'])} / {esc(item['total'])}</td><td><span class='pill'>{esc(item['percent'])}</span></td></tr>"
+            for item in details["disks"]
+        ) or "<tr><td colspan='3' class='muted'>Disk data is unavailable.</td></tr>"
+        interface_rows = "".join(
+            f"<tr><td><b>{esc(item['name'])}</b><div class='muted'>{esc(' · '.join(item['addresses']) or 'No address')}</div></td><td>{esc(human_bytes(int(item['rx'])))}</td><td>{esc(human_bytes(int(item['tx'])))}</td></tr>"
+            for item in details["interfaces"]
+        ) or "<tr><td colspan='3' class='muted'>Network-interface data is unavailable.</td></tr>"
+        process_rows = "".join(
+            f"<tr><td><code>{esc(item['pid'])}</code></td><td>{esc(item['name'])}</td><td>{esc(item['cpu'])}%</td><td>{esc(item['memory'])}%</td></tr>"
+            for item in details["processes"]
+        ) or "<tr><td colspan='4' class='muted'>Process data is unavailable.</td></tr>"
+        content = f"""<div class='title-row'><div><h1>VPS stats</h1><div class='muted'>Read-only server details from this VPS.</div></div><a class='button subtle' href='/vps-stats'>Refresh</a></div>
+<div class='grid two'><article class='card'><h2>Server</h2><p class='muted'>Hostname<br><b>{esc(details['hostname'])}</b></p><p class='muted'>Operating system<br><b>{esc(details['os'])}</b></p><p class='muted'>Kernel / architecture<br><b>{esc(details['kernel'])} · {esc(details['architecture'])}</b></p></article><article class='card'><h2>CPU & virtualization</h2><p class='muted'>CPU<br><b>{esc(details['cpu'])}</b></p><p class='muted'>Cores / virtualization<br><b>{esc(details['cores'])} · {esc(details['virtualization'])}</b></p><p class='muted'>Use the Dashboard for current load, RAM, disk and uptime.</p></article></div>
+<div class='grid two' style='margin-top:15px'><article class='card'><h2>Disks</h2><div class='table-wrap'><table class='table'><thead><tr><th>Mount</th><th>Used / total</th><th>Usage</th></tr></thead><tbody>{disk_rows}</tbody></table></div></article><article class='card'><h2>Network interfaces</h2><div class='table-wrap'><table class='table'><thead><tr><th>Interface</th><th>Received</th><th>Sent</th></tr></thead><tbody>{interface_rows}</tbody></table></div><p class='muted'>Counters are since the current boot.</p></article></div>
+<article class='card' style='margin-top:15px'><h2>Top processes by CPU</h2><div class='table-wrap'><table class='table'><thead><tr><th>PID</th><th>Process</th><th>CPU</th><th>Memory</th></tr></thead><tbody>{process_rows}</tbody></table></div></article>"""
+        self.send_html(self.page("VPS stats", content, user, "vps"))
 
     def service_action(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
         if not self.require_super_admin(user):
