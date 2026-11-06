@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import date, timedelta
 import hashlib
 import hmac
 import html
@@ -66,6 +67,13 @@ def setup_database() -> None:
                 action TEXT NOT NULL,
                 detail TEXT NOT NULL,
                 remote_addr TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ssh_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                expires_on TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                locked INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -140,6 +148,47 @@ def command(args: List[str], timeout: int = 5) -> Tuple[int, str]:
         return completed.returncode, completed.stdout.strip()
     except (subprocess.SubprocessError, OSError) as exc:
         return 1, str(exc)
+
+
+def command_with_input(args: List[str], value: str, timeout: int = 10) -> Tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            args,
+            input=value,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            check=False,
+        )
+        return completed.returncode, completed.stdout.strip()
+    except (subprocess.SubprocessError, OSError) as exc:
+        return 1, str(exc)
+
+
+def provision_ssh_account(username: str, duration_days: int) -> Tuple[bool, str, str]:
+    """Create one local Linux account with a system-enforced expiry date."""
+    expires_on = (date.today() + timedelta(days=duration_days)).isoformat()
+    exists_rc, _ = command(["id", "-u", username])
+    if exists_rc == 0:
+        return False, "This Linux username already exists.", ""
+    rc, output = command([
+        "useradd", "--create-home", "--user-group", "--shell", "/bin/bash",
+        "--expiredate", expires_on, username,
+    ])
+    if rc != 0:
+        return False, f"Could not create the Linux account: {output[:120]}", ""
+    password = secrets.token_urlsafe(14)
+    rc, output = command_with_input(["chpasswd"], f"{username}:{password}\n")
+    if rc != 0:
+        command(["userdel", "--remove", username])
+        return False, f"Could not set the account password: {output[:120]}", ""
+    with connection() as db:
+        db.execute(
+            "INSERT INTO ssh_accounts(username, expires_on, created_at, locked) VALUES(?, ?, ?, 0)",
+            (username, expires_on, int(time.time())),
+        )
+    return True, password, expires_on
 
 
 def service_state(unit: str) -> str:
@@ -222,6 +271,7 @@ def fmt_time(timestamp: int) -> str:
 CSS = """
 :root{color-scheme:dark;--bg:#090d0e;--panel:#12191a;--panel2:#182122;--line:#293637;--text:#e8f1f1;--muted:#8ba2a3;--accent:#52d9dc;--good:#5de28b;--warn:#efbe65;--bad:#fc7d7d}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{display:grid;grid-template-columns:235px 1fr;min-height:100vh}.brand{padding:21px 18px;border-bottom:1px solid var(--line);letter-spacing:.05em;font-weight:800;color:var(--accent)}.brand span{color:var(--text);font-weight:500}.side{border-right:1px solid var(--line);background:#0c1112}.nav{padding:13px 9px}.nav a{display:block;padding:11px 12px;border-radius:7px;color:var(--muted);text-decoration:none;margin:3px 0}.nav a:hover,.nav a.active{color:var(--accent);background:#132526}.side-foot{position:fixed;bottom:16px;left:18px;color:var(--muted);font-size:12px}.main{min-width:0}.top{height:65px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 28px}.crumb{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}.user{color:var(--muted)}.user b{color:var(--text)}.content{max-width:1300px;margin:auto;padding:26px}.title-row{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:21px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);margin:0 0 15px}.grid{display:grid;gap:15px;grid-template-columns:repeat(4,minmax(0,1fr))}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.metric{font-size:27px;font-weight:700;margin:8px 0}.muted{color:var(--muted);font-size:12px}.status{border-radius:999px;padding:4px 8px;font-size:11px;white-space:nowrap}.running{background:#123523;color:var(--good)}.stopped,.not-installed{background:#272d2d;color:var(--muted)}.failed{background:#482022;color:var(--bad)}.unknown{background:#43351b;color:var(--warn)}.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:580px}.table th{color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;text-align:left}.table th,.table td{border-bottom:1px solid var(--line);padding:12px 8px}.table td:first-child,.table th:first-child{padding-left:0}.table td:last-child,.table th:last-child{padding-right:0}.button{border:0;border-radius:7px;padding:9px 12px;background:var(--accent);color:#062123;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}.button.subtle{background:#253031;color:var(--text)}.button.danger{background:#4c2628;color:#ffdada}.button:disabled{opacity:.45;cursor:not-allowed}.button-row{display:flex;gap:7px;flex-wrap:wrap}.notice{border:1px solid #27585a;background:#113033;color:#b9f7f8;border-radius:8px;padding:11px 13px;margin-bottom:17px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}label{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}input,select{width:100%;padding:10px;border-radius:7px;border:1px solid var(--line);background:#0a1011;color:var(--text)}.login{min-height:100vh;display:grid;place-items:center;padding:20px}.login-box{width:min(410px,100%);padding:28px;background:var(--panel);border:1px solid var(--line);border-radius:14px}.login-box h1{color:var(--accent);margin-bottom:8px}.login-box p{color:var(--muted);margin-bottom:22px}.login-box form>*{margin-top:13px}.small{font-size:12px}.pill{font-size:11px;padding:3px 7px;border:1px solid var(--line);border-radius:99px;color:var(--muted)}@media(max-width:850px){.shell{display:block}.side{position:sticky;top:0;z-index:2;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:12px 16px}.nav{display:flex;gap:4px;overflow:auto;padding:7px 9px}.nav a{white-space:nowrap;padding:8px 10px}.side-foot{display:none}.top{height:52px;padding:0 16px}.content{padding:17px}.grid,.grid.two{grid-template-columns:1fr 1fr}.title-row{align-items:flex-start;flex-direction:column}}@media(max-width:500px){.grid,.grid.two,.form-grid{grid-template-columns:1fr}.metric{font-size:23px}.user{font-size:12px}}
 """
+CSS += ".status.active{background:#123523;color:var(--good)}.status.locked{background:#482022;color:var(--bad)}"
 
 
 class PanelHandler(BaseHTTPRequestHandler):
@@ -299,7 +349,7 @@ class PanelHandler(BaseHTTPRequestHandler):
     def page(self, title: str, content: str, user: Optional[Dict[str, Any]] = None, active: str = "") -> str:
         if not user:
             return f"<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>{esc(title)}</title><style>{CSS}</style></head><body>{content}</body></html>"
-        links = (("dashboard", "Dashboard", "/"), ("services", "Running services", "/services"),
+        links = (("dashboard", "Dashboard", "/"), ("ssh", "SSH accounts", "/ssh-accounts"), ("services", "Running services", "/services"),
                  ("settings", "Settings", "/settings"), ("admins", "Panel admins", "/admins"),
                  ("activity", "Activity log", "/activity"))
         nav = "".join(f"<a class='{('active' if key == active else '')}' href='{url}'>{label}</a>" for key, label, url in links)
@@ -308,7 +358,15 @@ class PanelHandler(BaseHTTPRequestHandler):
 
     def notice(self) -> str:
         text = parse_qs(urlparse(self.path).query).get("notice", [""])[0]
+        _, session = self.session()
+        if session and session.get("flash"):
+            text = str(session.pop("flash"))
         return f"<div class='notice'>{esc(text)}</div>" if text else ""
+
+    def set_flash(self, text: str) -> None:
+        _, session = self.session()
+        if session:
+            session["flash"] = text
 
     def require_user(self) -> Optional[Dict[str, Any]]:
         user = self.current_user()
@@ -332,6 +390,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             return
         if path == "/":
             self.dashboard(user)
+        elif path == "/ssh-accounts":
+            self.ssh_accounts_page(user)
         elif path == "/services":
             self.services_page(user)
         elif path == "/settings":
@@ -368,6 +428,10 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.save_python_proxy_port(user, form)
         elif path == "/admin-create":
             self.admin_create(user, form)
+        elif path == "/ssh-create":
+            self.ssh_create(user, form)
+        elif path == "/ssh-action":
+            self.ssh_action(user, form)
         else:
             self.redirect("/?notice=" + quote("Unknown action."))
 
@@ -404,6 +468,90 @@ class PanelHandler(BaseHTTPRequestHandler):
 <div class='grid two' style='margin-top:15px'><article class='card'><h2>Managed services</h2><div class='metric'>{running} / {len(SERVICE_CATALOG)}</div><div class='muted'>running from the approved local list</div></article><article class='card'><h2>Panel address</h2><div class='metric' style='font-size:18px'>{esc(get_setting('domain', 'Not set'))}:{esc(get_setting('port', '9090'))}</div><div class='muted'>Set a domain, then add HTTPS before public use.</div></article></div>
 <article class='card' style='margin-top:15px'><h2>Services</h2><div class='table-wrap'><table class='table'><thead><tr><th>Service</th><th>Status</th><th>Purpose</th></tr></thead><tbody>{service_rows}</tbody></table></div></article>"""
         self.send_html(self.page("Dashboard", content, user, "dashboard"))
+
+    def ssh_accounts_page(self, user: Dict[str, Any]) -> None:
+        with connection() as db:
+            accounts = db.execute(
+                "SELECT username, expires_on, created_at, locked FROM ssh_accounts ORDER BY id DESC"
+            ).fetchall()
+        csrf = self.csrf(user)
+        can_manage = user["role"] == "super_admin"
+        rows = []
+        for account in accounts:
+            state = "locked" if account["locked"] else "active"
+            actions = "<span class='muted'>View-only role</span>"
+            if can_manage:
+                action = "unlock" if account["locked"] else "lock"
+                caption = "Unlock" if account["locked"] else "Lock"
+                actions = (
+                    f"<form method='post' action='/ssh-action'><input type='hidden' name='csrf' value='{csrf}'>"
+                    f"<input type='hidden' name='username' value='{esc(account['username'])}'>"
+                    f"<button class='button subtle small' name='action' value='{action}'>{caption}</button></form>"
+                )
+            rows.append(
+                f"<tr><td><b>{esc(account['username'])}</b><div class='muted'>SSH port 22</div></td>"
+                f"<td><span class='status {state}'>{state}</span></td><td>{esc(account['expires_on'])}</td>"
+                f"<td>{esc(fmt_time(account['created_at']))}</td><td>{actions}</td></tr>"
+            )
+        table = "".join(rows) or "<tr><td colspan='5' class='muted'>No SSH accounts created from this panel yet.</td></tr>"
+        if can_manage:
+            create_card = f"""<article class='card'><h2>Create SSH account</h2>
+<form method='post' action='/ssh-create'><input type='hidden' name='csrf' value='{csrf}'>
+<div class='form-grid'><label>Username<input name='username' placeholder='clientname' maxlength='32' required></label>
+<label>Expires after days<input name='days' value='30' inputmode='numeric' required></label></div>
+<div class='button-row' style='margin-top:16px'><button class='button'>Create account</button></div></form>
+<p class='muted'>A random password is shown once after creation. The expiry date is enforced by Ubuntu for this Linux account.</p></article>"""
+        else:
+            create_card = "<article class='card'><h2>SSH accounts</h2><p class='muted'>Only a super administrator can create SSH accounts.</p></article>"
+        content = f"""{self.notice()}<div class='title-row'><div><h1>SSH accounts</h1><div class='muted'>Manage local SSH users created by DDK VPS Manager.</div></div></div>
+<div class='grid two'>{create_card}<article class='card'><h2>Connection details</h2><p class='muted'>Host: <b>{esc(get_setting('domain', 'your-vps-ip'))}</b><br>Port: <b>22</b><br>Expiry is enforced by the server. Locked accounts cannot sign in.</p></article></div>
+<article class='card' style='margin-top:15px'><h2>Created accounts</h2><div class='table-wrap'><table class='table'><thead><tr><th>Username</th><th>Status</th><th>Expiry</th><th>Created</th><th>Action</th></tr></thead><tbody>{table}</tbody></table></div></article>"""
+        self.send_html(self.page("SSH accounts", content, user, "ssh"))
+
+    def ssh_create(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
+        if not self.require_super_admin(user):
+            return
+        username = form.get("username", "").strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{2,31}", username):
+            self.redirect("/ssh-accounts?notice=" + quote("Use 3-32 lowercase letters, numbers, dash or underscore; start with a letter."))
+            return
+        try:
+            days = int(form.get("days", "0"))
+        except ValueError:
+            days = 0
+        if not 1 <= days <= 3650:
+            self.redirect("/ssh-accounts?notice=" + quote("Expiry must be from 1 to 3650 days."))
+            return
+        created, result, expiry = provision_ssh_account(username, days)
+        if not created:
+            self.redirect("/ssh-accounts?notice=" + quote(result))
+            return
+        audit(user["username"], "ssh_account_create", f"Created SSH account {username}; expiry {expiry}", self.client_address[0])
+        self.set_flash(f"SSH account created — username: {username} | password: {result} | expiry: {expiry}. Save this password now.")
+        self.redirect("/ssh-accounts")
+
+    def ssh_action(self, user: Dict[str, Any], form: Dict[str, str]) -> None:
+        if not self.require_super_admin(user):
+            return
+        username = form.get("username", "")
+        action = form.get("action", "")
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{2,31}", username) or action not in {"lock", "unlock"}:
+            self.redirect("/ssh-accounts?notice=" + quote("That SSH account action is not allowed."))
+            return
+        with connection() as db:
+            account = db.execute("SELECT username FROM ssh_accounts WHERE username = ?", (username,)).fetchone()
+        if not account:
+            self.redirect("/ssh-accounts?notice=" + quote("This account is not managed by DDK VPS Manager."))
+            return
+        flag = "--lock" if action == "lock" else "--unlock"
+        rc, output = command(["usermod", flag, username], timeout=10)
+        if rc != 0:
+            self.redirect("/ssh-accounts?notice=" + quote(f"Could not {action} account: {output[:120]}"))
+            return
+        with connection() as db:
+            db.execute("UPDATE ssh_accounts SET locked = ? WHERE username = ?", (1 if action == "lock" else 0, username))
+        audit(user["username"], f"ssh_account_{action}", f"{action.title()}ed SSH account {username}", self.client_address[0])
+        self.redirect("/ssh-accounts?notice=" + quote(f"SSH account {username} {action}ed."))
 
     def services_page(self, user: Dict[str, Any]) -> None:
         csrf = self.csrf(user)

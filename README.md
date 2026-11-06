@@ -22,7 +22,7 @@ On an Ubuntu VPS that you own, run this one command from a normal SSH terminal:
 curl -fsSL https://raw.githubusercontent.com/mrshahnawazyt/DDK-VPS-Manager/main/bootstrap.sh | sudo bash
 ```
 
-The installer asks for the domain/IP, panel port and first admin username. It creates a strong password and shows it once. Open `http://YOUR-DOMAIN:PORT` and sign in.
+The installer asks only for the panel domain/IP. It uses port `9090`, creates the default `admin` login and shows a strong generated password once. Open `http://YOUR-DOMAIN:9090` and sign in.
 
 After installation, the panel service starts automatically after every VPS reboot. For all management actions, type one command:
 

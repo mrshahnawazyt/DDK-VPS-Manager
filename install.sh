@@ -54,13 +54,8 @@ read -r -p "Panel domain or VPS IP: " PANEL_DOMAIN
 PANEL_DOMAIN="${PANEL_DOMAIN//[[:space:]]/}"
 [[ -n "$PANEL_DOMAIN" ]] || { echo "A domain or IP is required."; exit 1; }
 
-read -r -p "Panel port [9090]: " PANEL_PORT
-PANEL_PORT="${PANEL_PORT:-9090}"
-[[ "$PANEL_PORT" =~ ^[0-9]{2,5}$ ]] && (( PANEL_PORT >= 1024 && PANEL_PORT <= 65535 )) || { echo "Choose a port from 1024 to 65535."; exit 1; }
-
-read -r -p "First admin username [admin]: " ADMIN_USER
-ADMIN_USER="${ADMIN_USER:-admin}"
-[[ "$ADMIN_USER" =~ ^[A-Za-z0-9_.-]{3,32}$ ]] || { echo "Username must be 3-32 characters: letters, numbers, dot, dash or underscore."; exit 1; }
+PANEL_PORT="9090"
+ADMIN_USER="admin"
 
 if command -v openssl >/dev/null 2>&1; then
   ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-22)"
@@ -72,7 +67,9 @@ PY
 )"
 fi
 
+EXISTING_INSTALL=0
 if [[ -d "$APP_DIR" ]]; then
+  EXISTING_INSTALL=1
   read -r -p "Existing DDK VPS Manager installation found. Replace it? [y/N]: " REPLACE
   [[ "$REPLACE" =~ ^[Yy]$ ]] || { echo "Installation cancelled."; exit 0; }
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -111,8 +108,12 @@ echo
 echo "${APP_NAME} installed successfully."
 echo "Supported Ubuntu detected: ${VERSION_ID}"
 echo "Panel URL: http://${PANEL_DOMAIN}:${PANEL_PORT}"
-echo "Username: ${ADMIN_USER}"
-echo "Password: ${ADMIN_PASSWORD}"
-echo
-echo "Save this password now; it is not printed again."
+if (( EXISTING_INSTALL == 0 )); then
+  echo "Username: ${ADMIN_USER}"
+  echo "Password: ${ADMIN_PASSWORD}"
+  echo
+  echo "Save this password now; it is not printed again."
+else
+  echo "Existing admin login and password were kept unchanged."
+fi
 echo "Manage the installation later by typing: menu"
