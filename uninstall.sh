@@ -4,7 +4,8 @@ set -Eeuo pipefail
 APP_DIR="/opt/ddk-vps-manager"
 SERVICE="ddk-vps-manager"
 SERVICE_FILE="/etc/systemd/system/${SERVICE}.service"
-MENU_FILE="/usr/local/bin/ddk-vps-manager"
+MENU_FILE="/usr/local/bin/menu"
+LEGACY_MENU_FILE="/usr/local/bin/ddk-vps-manager"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Please run with sudo or as root."
@@ -12,7 +13,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 echo "This permanently removes DDK VPS Manager files, its database, logs,"
-echo "configuration, systemd service and the ddk-vps-manager menu command."
+echo "configuration, systemd service and the menu command."
 echo "It does not remove unrelated VPS applications, users or SSH access."
 read -r -p "Type REMOVE DDK VPS MANAGER to continue: " confirmation
 
@@ -24,6 +25,9 @@ fi
 systemctl disable --now "$SERVICE" 2>/dev/null || true
 rm -f "$SERVICE_FILE"
 rm -f "$MENU_FILE"
+if [[ -L "$LEGACY_MENU_FILE" ]] && [[ "$(readlink -f "$LEGACY_MENU_FILE")" == "$APP_DIR/menu.sh" ]]; then
+  rm -f "$LEGACY_MENU_FILE"
+fi
 rm -rf "$APP_DIR"
 systemctl daemon-reload
 systemctl reset-failed "$SERVICE" 2>/dev/null || true

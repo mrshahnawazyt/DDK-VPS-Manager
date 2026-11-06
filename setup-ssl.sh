@@ -8,7 +8,7 @@ SITE_FILE="/etc/nginx/sites-available/${SITE_NAME}"
 ENABLED_FILE="/etc/nginx/sites-enabled/${SITE_NAME}"
 
 if [[ "${EUID}" -ne 0 ]]; then
-  echo "Please run: sudo ddk-vps-manager"
+  echo "Open the main menu by typing: menu"
   exit 1
 fi
 

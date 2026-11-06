@@ -5,7 +5,8 @@ APP_NAME="DDK VPS Manager"
 APP_DIR="/opt/ddk-vps-manager"
 SERVICE_NAME="ddk-vps-manager"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-MENU_FILE="/usr/local/bin/ddk-vps-manager"
+MENU_FILE="/usr/local/bin/menu"
+LEGACY_MENU_FILE="/usr/local/bin/ddk-vps-manager"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Please run this installer with sudo or as root."
@@ -77,13 +78,25 @@ if [[ -d "$APP_DIR" ]]; then
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 fi
 
+if [[ -e "$MENU_FILE" || -L "$MENU_FILE" ]]; then
+  if [[ ! -L "$MENU_FILE" ]] || [[ "$(readlink -f "$MENU_FILE")" != "$APP_DIR/menu.sh" ]]; then
+    echo "Cannot install the menu command because $MENU_FILE already belongs to another program."
+    echo "Rename or remove that command first, then run this installer again."
+    exit 1
+  fi
+fi
+
 install -d -m 700 "$APP_DIR" "$APP_DIR/data" "$APP_DIR/logs"
 install -m 700 "$SOURCE_DIR/src/app.py" "$APP_DIR/app.py"
 install -m 700 "$SOURCE_DIR/menu.sh" "$APP_DIR/menu.sh"
 install -m 700 "$SOURCE_DIR/uninstall.sh" "$APP_DIR/uninstall.sh"
 install -m 700 "$SOURCE_DIR/setup-ssl.sh" "$APP_DIR/setup-ssl.sh"
 install -m 644 "$SOURCE_DIR/systemd/ddk-vps-manager.service" "$SERVICE_FILE"
+
 ln -sfn "$APP_DIR/menu.sh" "$MENU_FILE"
+if [[ -L "$LEGACY_MENU_FILE" ]] && [[ "$(readlink -f "$LEGACY_MENU_FILE")" == "$APP_DIR/menu.sh" ]]; then
+  rm -f "$LEGACY_MENU_FILE"
+fi
 
 DDK_VPS_MANAGER_HOME="$APP_DIR" python3 "$APP_DIR/app.py" --initialize \
   --admin-user "$ADMIN_USER" \
@@ -102,4 +115,4 @@ echo "Username: ${ADMIN_USER}"
 echo "Password: ${ADMIN_PASSWORD}"
 echo
 echo "Save this password now; it is not printed again."
-echo "Manage the installation later with: sudo ddk-vps-manager"
+echo "Manage the installation later by typing: menu"

@@ -5,7 +5,10 @@ APP_DIR="/opt/ddk-vps-manager"
 SERVICE="ddk-vps-manager"
 
 if [[ "${EUID}" -ne 0 ]]; then
-  echo "Please run: sudo ddk-vps-manager"
+  if command -v sudo >/dev/null 2>&1; then
+    exec sudo "$0"
+  fi
+  echo "This menu needs administrator access."
   exit 1
 fi
 

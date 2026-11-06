@@ -11,7 +11,7 @@ Supported Ubuntu releases: **20.04, 22.04, 24.04, 26.04 LTS and 26.10**. For a p
 - Start, stop, restart and logs for a limited list of local services
 - Panel roles and audit log
 - Optional integration point for an existing `ddk-vps-manager-python-proxy.service`
-- Interactive installation and a menu command: `ddk-vps-manager`
+- Interactive installation and a menu command: `menu`
 - Complete uninstall for files created by this project
 
 ## Install
@@ -24,17 +24,17 @@ curl -fsSL https://raw.githubusercontent.com/mrshahnawazyt/DDK-VPS-Manager/main/
 
 The installer asks for the domain/IP, panel port and first admin username. It creates a strong password and shows it once. Open `http://YOUR-DOMAIN:PORT` and sign in.
 
-After installation, the panel service starts automatically after every VPS reboot. For all management actions, run one command:
+After installation, the panel service starts automatically after every VPS reboot. For all management actions, type one command:
 
 ```bash
-sudo ddk-vps-manager
+menu
 ```
 
 The menu includes panel status/control, logs, optional Python service controls, HTTPS setup and complete uninstall.
 
 ## HTTPS
 
-First point a domain to your VPS and make sure ports 80 and 443 are reachable. Then run `sudo ddk-vps-manager` and choose **Set up HTTPS**. The helper installs Nginx and Certbot, configures an HTTP reverse proxy, requests a Let's Encrypt certificate and redirects HTTP traffic to HTTPS.
+First point a domain to your VPS and make sure ports 80 and 443 are reachable. Then type `menu` and choose **Set up HTTPS**. The helper installs Nginx and Certbot, configures an HTTP reverse proxy, requests a Let's Encrypt certificate and redirects HTTP traffic to HTTPS.
 
 ## Optional Python proxy service
 
@@ -54,7 +54,7 @@ download or run an unreviewed proxy program on its own.
 
 ## Uninstall
 
-Run `sudo ddk-vps-manager`, choose **Uninstall DDK VPS Manager**, then type the confirmation shown. This removes the panel, its configuration, database, logs, systemd units and menu command. It does not remove unrelated VPS services or user data.
+Type `menu`, choose **Uninstall DDK VPS Manager**, then type the confirmation shown. This removes the panel, its configuration, database, logs, systemd units and menu command. It does not remove unrelated VPS services or user data.
 
 ## License
 
