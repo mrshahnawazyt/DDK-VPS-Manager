@@ -12,7 +12,6 @@ NC='\033[0m'
 
 echo -e "${CYAN}=== Configuring Dropbear & SSH-WebSocket Proxy ===${NC}"
 
-# Configure Dropbear ports
 cat << 'DROPCONF' > /etc/default/dropbear
 NO_START=0
 DROPBEAR_PORT=109
@@ -24,7 +23,6 @@ DROPCONF
 
 systemctl restart dropbear 2>/dev/null || true
 
-# WS-Proxy Python service forwarding WS to Dropbear with 101 Switching Protocols
 cat << 'WSPROXY' > /usr/local/bin/ws-proxy.py
 #!/usr/bin/env python3
 import socket, threading, select

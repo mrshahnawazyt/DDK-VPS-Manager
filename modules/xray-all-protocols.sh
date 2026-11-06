@@ -14,7 +14,6 @@ DOMAIN="${1:-$(cat /etc/ddk-vps/domain.conf 2>/dev/null || curl -s -4 icanhazip.
 
 echo -e "${CYAN}=== Configuring Xray Multi-Protocol Inbounds for Domain: $DOMAIN ===${NC}"
 
-# Install latest Xray-core binary if missing
 if ! command -v xray >/dev/null 2>&1; then
   bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh 2>/dev/null)" @ install > /dev/null 2>&1 || true
 fi
