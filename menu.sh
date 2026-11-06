@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # DDK VPS Manager 2 - Main Dashboard
+# Repository: https://github.com/mrshahnawazyt/DDK-VPS-Manager
 # ==============================================================================
+
+# Sanitize potential CRLF line-ending issues
+sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 # Colors
 RED='\033[0;31m'
@@ -40,6 +44,7 @@ show_header() {
   echo -e "${CYAN}${BOLD}"
   echo "=============================================================================="
   echo "       DDK VPS MANAGER 2 - CONTROL PANEL (ڈی ڈی کے بی پی ایس مینیجر)         "
+  echo "       https://github.com/mrshahnawazyt/DDK-VPS-Manager                       "
   echo "=============================================================================="
   echo -e "${NC}"
   get_metrics
@@ -152,7 +157,7 @@ while true; do
       ;;
     9)
       echo -e "${CYAN}Updating DDK VPS Manager 2...${NC}"
-      curl -fsSL https://raw.githubusercontent.com/${GH_OWNER:-testn5165-collab}/${GH_REPO:-ddk-vps-manager-2}/main/install.sh | bash
+      curl -fsSL https://raw.githubusercontent.com/mrshahnawazyt/DDK-VPS-Manager/main/install.sh | bash
       read -p "Press [Enter] to continue..."
       ;;
     0)
