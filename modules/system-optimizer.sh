@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # DDK VPS Manager 2 - System Optimizer Module
+# Repository: https://github.com/mrshahnawazyt/DDK-VPS-Manager
 # ==============================================================================
+
+sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

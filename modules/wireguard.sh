@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # DDK VPS Manager 2 - WireGuard VPN Multi-Client Setup
+# Repository: https://github.com/mrshahnawazyt/DDK-VPS-Manager
 # ==============================================================================
+
+sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -34,7 +37,7 @@ if [ ! -f "$WG_DIR/wg0.conf" ]; then
   SERVER_PUB=$(cat server_public.key)
 
   # Find default network interface
-  NET_IF=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
+  NET_IF=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $5; exit}')
   [ -z "$NET_IF" ] && NET_IF="eth0"
 
   cat << WGCONF > "$WG_DIR/wg0.conf"
