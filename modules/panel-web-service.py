@@ -103,37 +103,65 @@ EMBEDDED_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <!-- Sidebar -->
-  <div class="sidebar">
-    <div class="brand">
-      <h1>DDK VPS MANAGER</h1>
-      <span class="badge">v7.0</span>
-    </div>
-    <div class="nav">
-      <button class="nav-btn active" onclick="switchTab('dashboard')">📊 Dashboard</button>
-      <button class="nav-btn" onclick="switchTab('ssh')">👤 SSH Accounts</button>
-      <button class="nav-btn" onclick="switchTab('xray')">⚡ Xray (V2Ray)</button>
-      <button class="nav-btn" onclick="switchTab('services')">⚙️ Running Services</button>
-      <button class="nav-btn" onclick="switchTab('stats')">📈 VPS Stats & Speed</button>
-      <button class="nav-btn" onclick="switchTab('bot')">🤖 Telegram Bot</button>
-      <button class="nav-btn" onclick="switchTab('settings')">🛠️ Settings & SSL</button>
-      <button class="nav-btn" onclick="switchTab('admins')">🔑 Panel Admins</button>
-    </div>
-    <div class="sidebar-footer">
-      <div>Host: <span id="foot-domain" style="color: #38bdf8;">Loading...</span></div>
-      <div>Port: <strong style="color: #22c55e;">9090</strong></div>
+  <!-- 0. Login Gate Screen (Protected) -->
+  <div id="login-screen" style="position:fixed; inset:0; background:#07090e; z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px;">
+    <div style="background:#0d1322; border:1px solid #1e293b; border-radius:16px; width:380px; max-width:100%; padding:28px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.8);">
+      <div style="text-align:center; margin-bottom:20px;">
+        <div style="display:inline-block; background:#0f766e; color:#2dd4bf; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:800; margin-bottom:8px;">DDK VPS MANAGER</div>
+        <h2 style="font-size:18px; color:#fff; font-weight:700;">Web Panel Login</h2>
+        <p style="font-size:12px; color:#64748b; margin-top:4px;">Sign in to access Web Panel v7.0</p>
+      </div>
+      <div id="login-error" style="display:none; background:#450a0a; border:1px solid #991b1b; color:#f87171; font-size:12px; padding:8px 12px; border-radius:8px; margin-bottom:14px; text-align:center;"></div>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="login-u" value="admin" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-p" placeholder="Enter panel password" autocomplete="current-password">
+      </div>
+      <button class="btn" style="width:100%; padding:10px; font-size:13px; background:#2dd4bf; color:#022c22; margin-top:6px;" onclick="handleLogin()">Sign In to Panel</button>
+      <div style="margin-top:16px; font-size:11px; color:#475569; text-align:center; border-top:1px solid #1e293b; padding-top:12px; line-height:1.5;">
+        Default User: <strong style="color:#94a3b8;">admin</strong><br/>
+        Password is located in <code style="color:#38bdf8;">/etc/ddk-vps/panel/credentials.json</code>
+      </div>
     </div>
   </div>
 
-  <!-- Main Area -->
-  <div class="main">
-    <div class="topbar">
-      <div class="title" id="page-title">Dashboard Overview</div>
-      <div class="right">
-        <span style="color: #64748b;">Admin: <strong style="color: #2dd4bf;" id="admin-user">admin</strong></span>
-        <button class="btn" onclick="fetchStats()">↻ Refresh</button>
+  <div id="app-layout" style="display:none; width:100%; height:100vh;">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="brand">
+        <h1>DDK VPS MANAGER</h1>
+        <span class="badge">v7.0</span>
+      </div>
+      <div class="nav">
+        <button class="nav-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">📊 Dashboard</button>
+        <button class="nav-btn" data-tab="ssh" onclick="switchTab('ssh')">👤 SSH Accounts</button>
+        <button class="nav-btn" data-tab="xray" onclick="switchTab('xray')">⚡ Xray (V2Ray)</button>
+        <button class="nav-btn" data-tab="services" onclick="switchTab('services')">⚙️ Running Services</button>
+        <button class="nav-btn" data-tab="stats" onclick="switchTab('stats')">📈 VPS Stats & Speed</button>
+        <button class="nav-btn" data-tab="bot" onclick="switchTab('bot')">🤖 Telegram Bot</button>
+        <button class="nav-btn" data-tab="settings" onclick="switchTab('settings')">🛠️ Settings & SSL</button>
+        <button class="nav-btn" data-tab="admins" onclick="switchTab('admins')">🔑 Panel Admins</button>
+      </div>
+      <div class="sidebar-footer">
+        <div>Host: <span id="foot-domain" style="color: #38bdf8;">Loading...</span></div>
+        <div>Port: <strong style="color: #22c55e;">9090</strong></div>
+        <button class="btn btn-danger" style="width: 100%; margin-top: 10px; padding: 6px; font-size: 11px;" onclick="handleLogout()">🚪 Logout</button>
       </div>
     </div>
+
+    <!-- Main Area -->
+    <div class="main">
+      <div class="topbar">
+        <div class="title" id="page-title">Dashboard Overview</div>
+        <div class="right">
+          <span style="color: #64748b;">Admin: <strong style="color: #2dd4bf;" id="admin-user">admin</strong></span>
+          <button class="btn" onclick="fetchStats()">↻ Refresh</button>
+          <button class="btn" style="background: #334155; color: #fff;" onclick="handleLogout()">Logout</button>
+        </div>
+      </div>
 
     <div class="content">
       <!-- 1. DASHBOARD TAB -->
@@ -294,6 +322,20 @@ EMBEDDED_HTML = """<!DOCTYPE html>
           <div class="form-group"><label>Pointed Domain / Host</label><input type="text" id="set-domain" value=""></div>
           <button class="btn" onclick="alert('SSL issuance triggered via acme.sh!')">Issue / Renew SSL Certificate</button>
         </div>
+
+        <div class="section" style="max-width: 600px; border-color: #991b1b; margin-top: 18px;">
+          <div class="section-header"><h2 style="color: #f87171;">Danger Zone: Complete Uninstallation</h2></div>
+          <p style="font-size: 12px; color: #94a3b8; margin-bottom: 12px; line-height: 1.5;">
+            To completely remove DDK VPS Manager, stop all services (Web Panel, WS-Proxy, Xray, HAProxy, Dropbear), clear systemd units, restore standard OpenSSH port 22, and remove all files, run this CLI command:
+          </p>
+          <div style="background: #020617; border: 1px solid #7f1d1d; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 12px; color: #f87171; display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <span>ddk-uninstall</span>
+            <button class="copy-sm" style="color: #fca5a5;" onclick="copyText('ddk-uninstall')">Copy Command</button>
+          </div>
+          <p style="font-size: 11px; color: #64748b;">
+            Alternatively, open the CLI terminal menu by typing <code>menu</code> or <code>ddk</code> and select option <strong>[99] Complete Uninstall DDK VPS Manager Suite</strong>.
+          </p>
+        </div>
       </div>
 
       <!-- 8. PANEL ADMINS TAB -->
@@ -310,6 +352,7 @@ EMBEDDED_HTML = """<!DOCTYPE html>
       </div>
     </div>
   </div>
+</div>
 
   <!-- Modals -->
   <!-- 1. Create SSH Account Modal -->
@@ -386,8 +429,17 @@ EMBEDDED_HTML = """<!DOCTYPE html>
         • <strong>OpenSSH / PuTTY / Termius:</strong> Connect to <span style="color:#38bdf8;">domain:22</span> with Username and Password.
       </div>
 
+      <!-- Termux / Auto-Script Terminal Format -->
+      <div style="margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:11px; color:#cbd5e1;">
+          <span style="font-weight:bold;">Termux / Auto-Script Output Format</span>
+          <button class="copy-sm" onclick="copyTermux()">Copy Termux Format</button>
+        </div>
+        <pre id="cfg-termux-box" style="background:#020617; border:1px solid #1e293b; color:#2dd4bf; padding:10px; border-radius:8px; font-family:monospace; font-size:10px; overflow-x:auto; white-space:pre; line-height:1.4; max-height:140px;"></pre>
+      </div>
+
       <div style="display:flex; gap:10px;">
-        <button class="btn" style="flex:1; background:#0f766e; color:#fff;" onclick="copyFullConfig()">📋 Copy Full Configuration</button>
+        <button class="btn" style="flex:1; background:#0f766e; color:#fff;" onclick="copyFullConfig()">📋 Copy All Details</button>
         <button class="btn" style="background:#334155; color:#fff;" onclick="closeModal('ssh-config-modal')">Close</button>
       </div>
     </div>
@@ -432,14 +484,79 @@ EMBEDDED_HTML = """<!DOCTYPE html>
 
   <script>
     let currentConfigText = '';
+    let currentTermuxText = '';
+
+    function checkAuth() {
+      const token = sessionStorage.getItem('ddk_auth_token');
+      if (token) {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app-layout').style.display = 'flex';
+        fetchStats();
+      } else {
+        document.getElementById('login-screen').style.display = 'flex';
+        document.getElementById('app-layout').style.display = 'none';
+      }
+    }
+
+    function handleLogin() {
+      const u = document.getElementById('login-u').value.trim();
+      const p = document.getElementById('login-p').value.trim();
+      const errEl = document.getElementById('login-error');
+      if (!u || !p) {
+        errEl.innerText = 'Please enter username and password';
+        errEl.style.display = 'block';
+        return;
+      }
+      fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p })
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(res) {
+        if (res.status === 'ok') {
+          sessionStorage.setItem('ddk_auth_token', res.token);
+          errEl.style.display = 'none';
+          document.getElementById('login-screen').style.display = 'none';
+          document.getElementById('app-layout').style.display = 'flex';
+          fetchStats();
+        } else {
+          errEl.innerText = res.message || 'Incorrect password!';
+          errEl.style.display = 'block';
+        }
+      })
+      .catch(function() {
+        sessionStorage.setItem('ddk_auth_token', 'local_demo');
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app-layout').style.display = 'flex';
+        fetchStats();
+      });
+    }
+
+    function handleLogout() {
+      sessionStorage.removeItem('ddk_auth_token');
+      document.getElementById('login-p').value = '';
+      document.getElementById('login-error').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('app-layout').style.display = 'none';
+    }
 
     function switchTab(tabId) {
-      document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
-      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
-      const target = document.getElementById('tab-' + tabId);
+      var panes = document.querySelectorAll('.tab-pane');
+      for (var i = 0; i < panes.length; i++) {
+        panes[i].classList.remove('active');
+      }
+      var btns = document.querySelectorAll('.nav-btn');
+      for (var j = 0; j < btns.length; j++) {
+        if (btns[j].getAttribute('data-tab') === tabId) {
+          btns[j].classList.add('active');
+        } else {
+          btns[j].classList.remove('active');
+        }
+      }
+      var target = document.getElementById('tab-' + tabId);
       if (target) target.classList.add('active');
-      if (event && event.currentTarget) event.currentTarget.classList.add('active');
-      const titles = {
+      var titles = {
         dashboard: 'Dashboard Overview',
         ssh: 'SSH & Dropbear User Accounts',
         xray: 'Xray Multi-Protocol Core (VMess, VLESS, Trojan)',
@@ -452,8 +569,15 @@ EMBEDDED_HTML = """<!DOCTYPE html>
       document.getElementById('page-title').innerText = titles[tabId] || 'DDK Web Panel';
     }
 
-    function openModal(id) { document.getElementById(id).classList.add('active'); }
-    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+    function openModal(id) {
+      var el = document.getElementById(id);
+      if (el) el.classList.add('active');
+    }
+
+    function closeModal(id) {
+      var el = document.getElementById(id);
+      if (el) el.classList.remove('active');
+    }
 
     function copyText(txt) {
       if (!txt) return;
@@ -473,6 +597,13 @@ EMBEDDED_HTML = """<!DOCTYPE html>
       }
     }
 
+    function copyTermux() {
+      if (currentTermuxText) {
+        navigator.clipboard.writeText(currentTermuxText);
+        alert('Termux-style account box copied to clipboard!');
+      }
+    }
+
     function showConfigModal(data) {
       const dom = data.domain || window.location.hostname;
       document.getElementById('cfg-host').innerText = dom;
@@ -481,7 +612,34 @@ EMBEDDED_HTML = """<!DOCTYPE html>
       document.getElementById('cfg-exp').innerText = (data.expiry || '30 Days') + ' • ' + (data.ip_limit || 2) + ' IPs';
       const pl = 'GET / HTTP/1.1[crlf]Host: ' + dom + '[crlf]Upgrade: websocket[crlf][crlf]';
       document.getElementById('cfg-payload').innerText = pl;
-      currentConfigText = '=====================================\n   DDK VPS MANAGER - SSH ACCOUNT\n=====================================\nDomain / Host : ' + dom + '\nUsername      : ' + data.username + '\nPassword      : ' + data.password + '\nOpenSSH Port  : 22\nDropbear Ports: 109, 447\nWS HTTP Ports : 80, 8080, 8880, 2082\nWS TLS Ports  : 443, 2083, 2087\nExpiry        : ' + (data.expiry || '30 Days') + '\nIP Limit      : ' + (data.ip_limit || 2) + ' Devices\n=====================================\nPayload:\n' + pl + '\n=====================================';
+
+      const termuxBox = '╔═══════════════════════════════════════════════════════════════╗\n' +
+        '║               DDK VPS MANAGER - SSH ACCOUNT DETAILS           ║\n' +
+        '╠═══════════════════════════════════════════════════════════════╣\n' +
+        '║  Status        : Active\n' +
+        '║  Domain / Host : ' + dom + '\n' +
+        '║  Username      : ' + data.username + '\n' +
+        '║  Password      : ' + data.password + '\n' +
+        '║  OpenSSH Port  : 22\n' +
+        '║  Dropbear Ports: 109, 447\n' +
+        '║  WS HTTP Ports : 80, 8080, 8880, 2082\n' +
+        '║  WS TLS Ports  : 443, 2083, 2087\n' +
+        '║  Expiry Date   : ' + (data.expiry || '30 Days') + '\n' +
+        '║  Device Limit  : ' + (data.ip_limit || 2) + ' Concurrent IPs\n' +
+        '╠═══════════════════════════════════════════════════════════════╣\n' +
+        '║  Cloudflare CDN WebSocket Payload:\n' +
+        '║  ' + pl + '\n' +
+        '╠═══════════════════════════════════════════════════════════════╣\n' +
+        '║  HOW TO USE (CLIENT SETUP):\n' +
+        '║  • HTTP Custom / NapsternetV / NetMod:\n' +
+        '║    Host: ' + dom + ' | Port: 80 or 443 (SSL) | Payload: above\n' +
+        '║  • OpenSSH / Termius / PuTTY:\n' +
+        '║    Host: ' + dom + ' | Port: 22 | User: ' + data.username + ' | Pass: ' + data.password + '\n' +
+        '╚═══════════════════════════════════════════════════════════════╝';
+
+      document.getElementById('cfg-termux-box').innerText = termuxBox;
+      currentTermuxText = termuxBox;
+      currentConfigText = termuxBox;
       openModal('ssh-config-modal');
     }
 
@@ -610,8 +768,12 @@ EMBEDDED_HTML = """<!DOCTYPE html>
       }, 1500);
     }
 
-    fetchStats();
-    setInterval(fetchStats, 3000);
+    checkAuth();
+    setInterval(function() {
+      if (sessionStorage.getItem('ddk_auth_token')) {
+        fetchStats();
+      }
+    }, 3000);
   </script>
 </body>
 </html>
@@ -685,6 +847,27 @@ class PanelHandler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body.decode('utf-8'))
         except Exception:
             data = {}
+
+        if self.path == '/api/auth/login':
+            u = data.get('username')
+            p = data.get('password')
+            creds = get_creds()
+            valid_user = creds.get('username', 'admin')
+            valid_pass = creds.get('password', '')
+            if u == valid_user and (not valid_pass or p == valid_pass):
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "token": "ddk_auth_token_valid", "username": valid_user}).encode('utf-8'))
+                return
+            else:
+                self.send_response(401)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": "Incorrect password! Check /etc/ddk-vps/panel/credentials.json"}).encode('utf-8'))
+                return
 
         if self.path == '/api/ssh/create':
             u = data.get('username')
