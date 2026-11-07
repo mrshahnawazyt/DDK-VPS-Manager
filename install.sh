@@ -1,349 +1,264 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # ==============================================================================
-# DDK VPS Manager 2 - Next-Gen Multi-Protocol Suite & Web Panel (Port 9090)
-# Repository: https://github.com/mrshahnawazyt/DDK-VPS-Manager
-# Protocols: Dropbear SSH, Python WS-Proxy, Xray (VMess/VLESS/Trojan), HAProxy, Nginx
-# License: MIT
+# DDK VPS Manager - installer / updater
+#
+# Fresh VPS ya update (dono ke liye same command), private repo + token:
+#   read -rsp "GitHub token: " GH_TOKEN; export GH_TOKEN; echo
+#   bash <(curl -fsSL -H "Authorization: token $GH_TOKEN" https://raw.githubusercontent.com/testmyanmar324-wq/vmess/main/install.sh)
+#
+# Ye script:
+#   1) curl / jq / flock jaisi zaroori cheezein install karta hai
+#   2) menu.sh + fix-xray-sync.sh GitHub se /opt/ddkvps me download karta hai
+#      (syntax check ke baad hi lagata hai; purani file backup me rakhta hai)
+#   3) `menu` aur `ddkvps` command banata hai
+#   4) Xray pehle se installed ho to fix-xray-sync.sh chalata hai
+#      (lib upgrade; connected users ko nahi chhedta)
+#   5) Web panel (rt-web) installed ho to use bhi update + restart karta hai
+#      (--web do to web panel pehli baar install bhi kar deta hai)
+#   6) FRESH VPS: sab se pehle domain poochta hai, phir sab kuch apne-aap install
+#      (SSH/WS/SSL stack + Xray + Let's Encrypt SSL + Web panel), aakhir me link + login dikhata hai
+#   7) panel menu khol deta hai
+#
+# Options:  --no-run   (menu mat kholo)    --no-fix   (fix-xray-sync.sh mat chalao)
+#           --web      (browser wala web panel bhi install / update karo)
+#           --domain sub.example.com   (fresh install par domain pehle se de do, sawal nahi)
+#           --no-auto  (fresh VPS par khud-ba-khud install mat karo, sirf files)
+# Env    :  GH_TOKEN (private repo) | GH_USER GH_REPO GH_BRANCH | RT_BASE_URL=https://.../raw/path | RT_DOMAIN
 # ==============================================================================
 
-if [ -f "$0" ]; then
-  sed -i 's/\r$//' "$0" 2>/dev/null || true
-fi
+# GitHub repo (private ho to GH_TOKEN env me personal access token do - token kahin save nahi hota)
+GH_USER="${GH_USER:-testn5165-collab}"
+GH_REPO="${GH_REPO:-deploysuite}"
+GH_BRANCH="${GH_BRANCH:-main}"
+BASE="${RT_BASE_URL:-https://raw.githubusercontent.com/${GH_USER}/${GH_REPO}/${GH_BRANCH}}"
 
-set -e
+DIR="${RT_DIR:-/opt/ddkvps}"
+FILES=(menu.sh fix-xray-sync.sh)
+OPT_FILES=(rt-web.py install-web.sh)   # web panel (repo me na hon to skip)
+XRAY_CONF="/usr/local/etc/xray/config.json"
+MARK="# ddkvps-launcher"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-NC='\033[0m'
-BOLD='\033[1m'
+AUTH=(); [[ -n "${GH_TOKEN:-}" ]] && AUTH=(-H "Authorization: token ${GH_TOKEN}")
 
-INSTALL_DIR="/etc/ddk-vps"
-BIN_PATH="/usr/local/bin/ddk"
-REPO_OWNER="${GH_OWNER:-mrshahnawazyt}"
-REPO_NAME="${GH_REPO:-DDK-VPS-Manager}"
-BRANCH="${GH_BRANCH:-main}"
-
-clear
-echo -e "${CYAN}${BOLD}"
-cat << "EOF"
-  ____  ____  _  __ __     ______  ____    __  __                                   ____  
- |  _ \|  _ \| |/ / \ \   / /  _ \/ ___|  |  \/  | __ _ _ __   __ _  __ _  ___ _ __|___ \ 
- | | | | | | | ' /   \ \ / /| |_) \___ \  | |\/| |/ _` | '_ \ / _` |/ _` |/ _ \ '__| __) |
- | |_| | |_| | . \    \ V / |  __/ ___) | | |  | | (_| | | | | (_| | (_| |  __/ |   / __/ 
- |____/|____/|_|\_\    \_/  |_|   |____/  |_|  |_|\__,_|_| |_|\__,_|\__, |\___|_|  |_____|
-                                                                    |___/                 
-           --- Next-Gen Multi-Protocol Suite & Web Panel v7.0 ---
-           Web Panel: http://YOUR_VPS_IP:9090
-EOF
-echo -e "${NC}"
-
-if [ "$(id -u)" -ne 0 ]; then
-  echo -e "${RED}[ERROR] This script must be run as root!${NC}"
-  echo -e "${YELLOW}Please run: sudo bash $0${NC}"
-  exit 1
-fi
-
-echo -e "${BLUE}[INFO]${NC} Checking operating system..."
-if [ -f /etc/os-release ]; then
-  . /etc/os-release
-  OS=$ID
-  VER=$VERSION_ID
+# Deploy Suite palette (teal / orange / green on dark) - terminal na ho to bina rang
+if [[ -t 1 && "${TERM:-dumb}" != dumb ]]; then
+    T=$'\033[38;5;80m'; TB=$'\033[1;38;5;234;48;5;80m'; GB=$'\033[38;5;80;48;5;237m'; M=$'\033[38;5;245m'
+    W=$'\033[38;5;255m'; G=$'\033[38;5;114m'; Y=$'\033[38;5;221m'; E=$'\033[38;5;203m'; L=$'\033[38;5;239m'
+    O=$'\033[38;5;215m'; B=$'\033[1m'; NC=$'\033[0m'
 else
-  echo -e "${RED}[ERROR] Cannot detect operating system!${NC}"
-  exit 1
+    T=; TB=; GB=; M=; W=; G=; Y=; E=; L=; O=; B=; NC=
 fi
-echo -e "${GREEN}[OK]${NC} Detected OS: ${CYAN}$OS $VER${NC}"
-
-IPV4=$(curl -s -4 icanhazip.com || curl -s -4 ifconfig.me || curl -s -4 ipinfo.io/ip || echo "127.0.0.1")
-echo -e "${GREEN}[OK]${NC} Public IPv4: ${YELLOW}$IPV4${NC}"
-
-# ==============================================================================
-# INTERACTIVE DOMAIN CONFIGURATION STEP
-# ==============================================================================
-echo ""
-echo -e "${YELLOW}==============================================================================${NC}"
-echo -e "${CYAN}${BOLD}            STEP 1: DOMAIN & SSL CONFIGURATION                               ${NC}"
-echo -e "${YELLOW}==============================================================================${NC}"
-echo -e "${WHITE}To enable Let's Encrypt SSL, Xray Reality/VLESS, and the Web Panel,${NC}"
-echo -e "${WHITE}please provide your pointed Domain or Subdomain (e.g. vps.example.com).${NC}"
-echo -e "${WHITE}Ensure an 'A' record in Cloudflare / DNS points to: ${GREEN}$IPV4${NC}"
-echo ""
-
-read -p "Enter Domain / Subdomain (or press Enter for IP mode): " USER_DOMAIN
-
-if [ -z "$USER_DOMAIN" ]; then
-  echo -e "${YELLOW}[!] No domain specified. Proceeding in IP mode with Self-Signed SSL.${NC}"
-  DOMAIN="$IPV4"
-else
-  echo -e "${BLUE}[INFO]${NC} Verifying DNS resolution for ${CYAN}$USER_DOMAIN${NC}..."
-  RESOLVED_IP=$(ping -c 1 "$USER_DOMAIN" 2>/dev/null | sed -n 's/.*(\([0-9.]*\)).*/\1/p' | head -n 1 || getent ahostsv4 "$USER_DOMAIN" 2>/dev/null | awk '{print $1}' | head -n 1 || echo "")
-  
-  if [ "$RESOLVED_IP" == "$IPV4" ]; then
-    echo -e "${GREEN}[SUCCESS]${NC} Domain ${CYAN}$USER_DOMAIN${NC} is successfully pointed to ${GREEN}$IPV4${NC}!"
-    DOMAIN="$USER_DOMAIN"
-  else
-    echo -e "${YELLOW}[WARNING]${NC} Domain '$USER_DOMAIN' resolves to '${RED}$RESOLVED_IP${NC}' (Server IP is ${GREEN}$IPV4${NC})."
-    echo -e "${WHITE}Tip: If using Cloudflare, set proxy status to 'DNS Only' (Grey Cloud).${NC}"
-    read -p "Do you want to continue with this domain anyway? [y/N]: " FORCE_DOM
-    if [[ "$FORCE_DOM" =~ ^[Yy]$ ]]; then
-      DOMAIN="$USER_DOMAIN"
-    else
-      echo -e "${YELLOW}[!] Falling back to IP mode.${NC}"
-      DOMAIN="$IPV4"
-    fi
-  fi
-fi
-
-mkdir -p "$INSTALL_DIR"
-echo "$DOMAIN" > "$INSTALL_DIR/domain.conf"
-echo -e "${GREEN}[OK]${NC} Configured domain: ${CYAN}$DOMAIN${NC}"
-
-# ==============================================================================
-# INSTALL PREREQUISITES & MULTI-PROTOCOL PACKAGES
-# ==============================================================================
-echo ""
-echo -e "${BLUE}[INFO]${NC} Installing system packages (Dropbear, HAProxy, Nginx, Python3, Certbot, Socat)..."
-if [[ "$OS" == "ubuntu" || "$OS" == "debian" ]]; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y > /dev/null 2>&1
-  apt-get install -y curl wget jq tar net-tools htop dropbear haproxy nginx python3 python3-pip certbot iptables socat git ca-certificates openssl cron bc dnsutils > /dev/null 2>&1
-elif [[ "$OS" == "centos" || "$OS" == "almalinux" || "$OS" == "rocky" ]]; then
-  yum update -y > /dev/null 2>&1
-  yum install -y epel-release > /dev/null 2>&1 || true
-  yum install -y curl wget jq tar dropbear haproxy nginx python3 certbot iptables socat git ca-certificates openssl cronie bind-utils > /dev/null 2>&1
-fi
-echo -e "${GREEN}[OK]${NC} System packages installed."
-
-mkdir -p "$INSTALL_DIR/modules"
-mkdir -p "$INSTALL_DIR/panel"
-mkdir -p "$INSTALL_DIR/configs"
-mkdir -p "$INSTALL_DIR/ssl"
-
-# Auto-generate random secure admin password
-ADMIN_PASS=$(openssl rand -hex 6 2>/dev/null || date +%s | tail -c 8)
-cat << CREDS > "$INSTALL_DIR/panel/credentials.json"
-{
-  "username": "admin",
-  "password": "$ADMIN_PASS",
-  "role": "Super Admin",
-  "domain": "$DOMAIN",
-  "created_at": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-}
-CREDS
-chmod 600 "$INSTALL_DIR/panel/credentials.json"
-
-# ==============================================================================
-# SSL CERTIFICATE ISSUANCE (ACME.SH / ZERO-SSL / SELF-SIGNED)
-# ==============================================================================
-echo ""
-echo -e "${BLUE}[INFO]${NC} Setting up SSL certificates..."
-systemctl stop nginx haproxy 2>/dev/null || true
-
-if [ "$DOMAIN" != "$IPV4" ]; then
-  echo -e "${BLUE}[INFO]${NC} Requesting Let's Encrypt SSL certificate for ${CYAN}$DOMAIN${NC} via acme.sh..."
-  curl -s https://get.acme.sh | sh -s email=admin@$DOMAIN >/dev/null 2>&1 || true
-  ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1 || true
-  ~/.acme.sh/acme.sh --issue -d "$DOMAIN" --standalone -k ec-256 --force >/dev/null 2>&1 || true
-  ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc \
-    --fullchain-file "$INSTALL_DIR/ssl/ddk.crt" \
-    --key-file "$INSTALL_DIR/ssl/ddk.key" >/dev/null 2>&1 || true
-fi
-
-if [ ! -f "$INSTALL_DIR/ssl/ddk.crt" ]; then
-  echo -e "${YELLOW}[INFO]${NC} Generating high-grade 2048-bit SSL certificate..."
-  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout "$INSTALL_DIR/ssl/ddk.key" \
-    -out "$INSTALL_DIR/ssl/ddk.crt" \
-    -subj "/C=US/ST=Cloud/L=Server/O=DDK-VPS/CN=$DOMAIN" >/dev/null 2>&1 || true
-fi
-
-cat "$INSTALL_DIR/ssl/ddk.crt" "$INSTALL_DIR/ssl/ddk.key" > "$INSTALL_DIR/ssl/ddk.pem" 2>/dev/null || true
-echo -e "${GREEN}[OK]${NC} SSL Certificate active at $INSTALL_DIR/ssl/ddk.crt"
-
-# ==============================================================================
-# DOWNLOAD REPOSITORY MODULES
-# ==============================================================================
-echo ""
-echo -e "${BLUE}[INFO]${NC} Fetching DDK VPS Manager modules from GitHub..."
-download_module() {
-  local file_path="$1"
-  local dest_path="$2"
-  local success=false
-
-  local urls=(
-    "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$BRANCH/$file_path"
-    "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/master/$file_path"
-    "https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/main/$file_path"
-  )
-
-  for url in "${urls[@]}"; do
-    if [ -n "$GH_TOKEN" ]; then
-      if curl -fsSL -H "Authorization: token $GH_TOKEN" "$url" -o "$dest_path" 2>/dev/null; then
-        if [ -s "$dest_path" ]; then success=true; break; fi
-      fi
-    else
-      if curl -fsSL "$url" -o "$dest_path" 2>/dev/null; then
-        if [ -s "$dest_path" ]; then success=true; break; fi
-      fi
-    fi
-  done
-
-  sed -i 's/\r$//' "$dest_path" 2>/dev/null || true
-  chmod +x "$dest_path" 2>/dev/null || true
+RED=$E; GREEN=$G; YELLOW=$Y; CYAN=$T
+ok()   { echo -e "  ${G}✓${NC} $*"; }
+warn() { echo -e "  ${Y}!${NC} $*"; }
+die()  { echo -e "  ${E}✗ $*${NC}"; exit 1; }
+hr()   { echo -e "  ${L}────────────────────────────────────────────────────────────────${NC}"; }
+rt_badge() {   # $1 = doosra label
+    echo -e "  ${TB} DDK VPS MANAGER ${NC}${GB} $1 ${NC} ${M}v7.0${NC}"
+    echo -e "  ${M}SSH / WS / SSL / Xray / QoS setup${NC}"
+    echo
 }
 
-download_module "menu.sh" "$INSTALL_DIR/menu.sh"
-download_module "modules/ssh-ws.sh" "$INSTALL_DIR/modules/ssh-ws.sh"
-download_module "modules/xray-all-protocols.sh" "$INSTALL_DIR/modules/xray-all-protocols.sh"
-download_module "modules/panel-web-service.py" "$INSTALL_DIR/panel/web-service.py"
-download_module "modules/bbr.sh" "$INSTALL_DIR/modules/bbr.sh"
-download_module "modules/system-optimizer.sh" "$INSTALL_DIR/modules/system-optimizer.sh"
-download_module "modules/backup.sh" "$INSTALL_DIR/modules/backup.sh"
-download_module "uninstall.sh" "$INSTALL_DIR/uninstall.sh"
-chmod +x "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
-ln -sf "$INSTALL_DIR/uninstall.sh" /usr/local/bin/ddk-uninstall 2>/dev/null || true
+RUN=1; FIX=1; WEB=0; AUTO=1; DOMAIN="${RT_DOMAIN:-}"
+while (( $# )); do
+    case "$1" in
+        --no-run) RUN=0 ;;
+        --no-fix) FIX=0 ;;
+        --web) WEB=1 ;;
+        --no-auto) AUTO=0 ;;
+        --domain) shift; DOMAIN="${1:-}" ;;
+        -h|--help) sed -n '2,28p' "$0" 2>/dev/null || echo "options: --no-run --no-fix --web --domain D --no-auto"; exit 0 ;;
+        *) die "Unknown option: $1" ;;
+    esac
+    shift
+done
+# fresh VPS = abhi tak panel install nahi hua
+FRESH=0; [[ ! -f "$XRAY_CONF" && ! -f /etc/systemd/system/rt-monitor.service ]] && FRESH=1
 
-# ==============================================================================
-# EXECUTE PROTOCOL INSTALLATION & ACTIVATION
-# ==============================================================================
-echo ""
-echo -e "${BLUE}[INFO]${NC} Activating Dropbear SSH & Python WebSocket Proxies..."
-bash "$INSTALL_DIR/modules/ssh-ws.sh"
-
-echo -e "${BLUE}[INFO]${NC} Activating Xray Multi-Protocol Suite (VMess, VLESS Reality, Trojan)..."
-bash "$INSTALL_DIR/modules/xray-all-protocols.sh" "$DOMAIN"
-
-echo -e "${BLUE}[INFO]${NC} Configuring HAProxy & Nginx Multi-Port Router..."
-cat << 'HACONF' > /etc/haproxy/haproxy.cfg
-global
-    log /dev/log local0
-    tune.ssl.default-dh-param 2048
-
-defaults
-    log     global
-    mode    http
-    option  httplog
-    option  dontlognull
-    timeout connect 5000ms
-    timeout client  50000ms
-    timeout server  50000ms
-
-frontend http_front
-    bind *:80
-    mode http
-    acl is_ws hdr(Upgrade) -i websocket
-    use_backend ws_proxy_back if is_ws
-    default_backend panel_back
-
-frontend https_front
-    bind *:443 ssl crt /etc/ddk-vps/ssl/ddk.pem
-    mode http
-    acl is_vmess path_beg /vmess
-    acl is_vless path_beg /vless
-    acl is_trojan path_beg /trojan
-    acl is_ws hdr(Upgrade) -i websocket
-    use_backend xray_vmess if is_vmess
-    use_backend xray_vless if is_vless
-    use_backend xray_trojan if is_trojan
-    use_backend ws_proxy_back if is_ws
-    default_backend panel_back
-
-backend ws_proxy_back
-    mode http
-    server wsp 127.0.0.1:2082
-
-backend xray_vmess
-    mode http
-    server xvmess 127.0.0.1:8442
-
-backend xray_vless
-    mode http
-    server xvless 127.0.0.1:8443
-
-backend xray_trojan
-    mode http
-    server xtrojan 127.0.0.1:8445
-
-backend panel_back
-    mode http
-    server webp 127.0.0.1:9090
-HACONF
-
-systemctl restart haproxy 2>/dev/null || true
-
-echo -e "${BLUE}[INFO]${NC} Optimizing TCP BBR & System Buffers..."
-bash "$INSTALL_DIR/modules/bbr.sh" >/dev/null 2>&1 || true
-bash "$INSTALL_DIR/modules/system-optimizer.sh" >/dev/null 2>&1 || true
-
-# Setup Systemd Web Panel Service (Port 9090)
-cat << 'SYSTEMD' > /etc/systemd/system/ddk-panel.service
-[Unit]
-Description=DDK VPS Manager Web Panel (Port 9090)
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/etc/ddk-vps/panel
-ExecStart=/usr/bin/python3 /etc/ddk-vps/panel/web-service.py
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-SYSTEMD
-
-systemctl daemon-reload
-systemctl enable ddk-panel > /dev/null 2>&1 || true
-systemctl restart ddk-panel 2>/dev/null || true
-
-cat << 'LAUNCHER' > "$BIN_PATH"
-#!/usr/bin/env bash
-sed -i 's/\r$//' /etc/ddk-vps/menu.sh 2>/dev/null || true
-exec bash /etc/ddk-vps/menu.sh "$@"
-LAUNCHER
-chmod +x "$BIN_PATH"
-ln -sf "$BIN_PATH" /usr/local/bin/vps
-
-# ==============================================================================
-# COMPLETION SUMMARY BANNER WITH AUTO-GENERATED RANDOM PASSWORD
-# ==============================================================================
-clear
-echo -e "${GREEN}${BOLD}"
-echo "=============================================================================="
-echo "          DDK VPS MANAGER 2 - INSTALLATION COMPLETED SUCCESSFULLY             "
-echo "=============================================================================="
-echo -e "${NC}"
-echo -e "${WHITE} [●] Server Domain     : ${CYAN}https://$DOMAIN${NC}"
-echo -e "${WHITE} [●] Server IPv4       : ${YELLOW}$IPV4${NC}"
-if [ "$DOMAIN" != "$IPV4" ]; then
-  echo -e "${WHITE} [●] Web Panel URL     : ${GREEN}https://$DOMAIN:9090${NC} (or http://$IPV4:9090)"
-else
-  echo -e "${WHITE} [●] Web Panel URL     : ${GREEN}http://$IPV4:9090${NC}"
+[[ $EUID -eq 0 ]] || die "root chahiye (sudo -i ya sudo bash install.sh)"
+if [[ -z "${RT_BASE_URL:-}" && ( "$GH_USER" == YOUR_* || "$GH_REPO" == YOUR_* ) ]]; then
+    die "install.sh ke upar GH_USER / GH_REPO apne GitHub repo ke naam se badlo (ya GH_USER=.. GH_REPO=.. env do)"
 fi
-echo -e "${WHITE} [●] Default Admin User: ${CYAN}admin${NC}"
-echo -e "${WHITE} [●] Auto-Generated PW : ${YELLOW}${BOLD}$ADMIN_PASS${NC}"
-echo -e "${WHITE} [●] Credentials File  : ${PURPLE}/etc/ddk-vps/panel/credentials.json${NC}"
-echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
-echo -e "${BOLD}${YELLOW}  === ALL-IN-ONE ACTIVE PROTOCOLS & PORTS ===${NC}"
-echo -e "${WHITE} [1] OpenSSH Direct    : ${CYAN}Port 22${NC}"
-echo -e "${WHITE} [2] Dropbear SSH      : ${CYAN}Port 109, 447${NC}"
-echo -e "${WHITE} [3] Python SSH-WS     : ${CYAN}Port 80, 443, 2082, 2083, 2084, 2085, 8880${NC}"
-echo -e "${WHITE} [4] Xray VMess WS     : ${CYAN}Port 8442, 2082${NC} (Path: /vmess)"
-echo -e "${WHITE} [5] Xray VLESS WS     : ${CYAN}Port 8443, 443${NC}  (Path: /vless)"
-echo -e "${WHITE} [6] Xray VLESS Reality: ${CYAN}Port 8446${NC}      (Flow: xtls-rprx-vision)"
-echo -e "${WHITE} [7] Xray Trojan WS    : ${CYAN}Port 8445, 443${NC}  (Path: /trojan)"
-echo -e "${WHITE} [8] DDK Web Panel     : ${CYAN}Port 9090${NC}      (8-in-1 Cyber SPA)"
-echo -e "${GREEN}[✓] To launch terminal menu anytime, type: ${YELLOW}ddk${GREEN} or ${YELLOW}menu${GREEN} or ${YELLOW}vps${NC}"
-echo -e "${RED}[!] To completely uninstall script, run  : ${YELLOW}ddk-uninstall${NC}"
-echo "=============================================================================="
-echo ""
-sleep 2
 
-bash "$INSTALL_DIR/menu.sh"
+NODE_IP=$(curl -4 -s -m 5 https://api.ipify.org 2>/dev/null)
+[[ "$NODE_IP" =~ ^[0-9.]+$ ]] || NODE_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+NODE_OS=$( . /etc/os-release 2>/dev/null; echo "${NAME%% *} ${VERSION_ID:-}" )
+NODE_RAM=$(awk '/^MemTotal:/{printf "%.1f GB", $2/1048576}' /proc/meminfo 2>/dev/null)
+[[ -t 1 ]] && clear
+rt_badge "DEPLOY SUITE"
+echo -e "  ${M}node${NC}    ${W}${NODE_IP}  ${NODE_OS}  $(nproc 2>/dev/null || echo 1) vCPU  ${NODE_RAM} RAM${NC}"
+echo -e "  ${M}source${NC}  ${W}${BASE#https://}${NC}"
+echo -e "  ${M}folder${NC}  ${W}$DIR${NC}"
+hr
+echo -e "  ${T}${B}BOOTSTRAP${NC}  ${M}files + commands${NC}"
+
+# ---- 1) dependencies --------------------------------------------------------
+if [[ -z "${RT_SKIP_DEPS:-}" ]]; then
+    need=()
+    command -v curl  >/dev/null 2>&1 || need+=(curl)
+    command -v jq    >/dev/null 2>&1 || need+=(jq)
+    command -v flock >/dev/null 2>&1 || need+=(util-linux)
+    command -v openssl >/dev/null 2>&1 || need+=(openssl)
+    command -v unzip >/dev/null 2>&1 || need+=(unzip)
+    if (( ${#need[@]} )); then
+        echo -e "  ${T}→${NC} packages install: ${M}${need[*]}${NC}"
+        export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1
+        # FIX: fresh VPS par automatic updates apt lock pakde rehte hain -> intezar (max 10 min) + 3 koshish
+        APTO=(-y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+        okd=0
+        for try in 1 2 3; do
+            dpkg --configure -a >/dev/null 2>&1
+            apt-get "${APTO[@]}" update >/dev/null 2>&1
+            apt-get "${APTO[@]}" install "${need[@]}" >/dev/null 2>&1 && { okd=1; break; }
+            warn "apt busy / fail (koshish $try/3) - 15s baad dobara"; sleep 15
+        done
+        (( okd )) || die "apt install fail: ${need[*]} (thodi der baad dobara chalayein)"
+    fi
+    ok "dependencies ready"
+fi
+command -v curl >/dev/null 2>&1 || die "curl nahi hai"
+
+# ---- 2) download + verify ---------------------------------------------------
+mkdir -p "$DIR/backup" || die "$DIR nahi ban paya"
+stamp=$(date +%Y%m%d-%H%M%S)
+for f in "${FILES[@]}" "${OPT_FILES[@]}"; do
+    opt=0; [[ " ${OPT_FILES[*]} " == *" $f "* ]] && opt=1
+    tmp=$(mktemp)
+    if ! curl -fsSL --retry 3 --retry-delay 2 "${AUTH[@]}" "$BASE/$f" -o "$tmp"; then
+        rm -f "$tmp"
+        if (( opt )); then warn "$f repo me nahi mila - web panel update skip"; continue; fi
+        die "$f download fail ($BASE/$f) - repo private hai to GH_TOKEN set karo (token me repo Contents:read chahiye)"
+    fi
+    head -1 "$tmp" | grep -q '^#!' || { rm -f "$tmp"; die "$f sahi script nahi lag raha (URL / repo / branch check karo)"; }
+    if [[ "$f" == *.py ]]; then
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$tmp" || { rm -f "$tmp"; die "$f me syntax error (file adhoori upload hui?)"; }
+        fi
+    else
+        bash -n "$tmp" || { rm -f "$tmp"; die "$f me syntax error (file adhoori upload hui?)"; }
+    fi
+    if [[ "$f" == menu.sh ]] && (( $(wc -c < "$tmp") < 50000 )); then
+        rm -f "$tmp"; die "menu.sh bahut chhoti hai - adhoori upload lag rahi hai"
+    fi
+    [[ -f "$DIR/$f" ]] && cp -a "$DIR/$f" "$DIR/backup/$f.$stamp"
+    mv -f "$tmp" "$DIR/$f"; chmod 755 "$DIR/$f"
+    ok "$f updated ($(wc -l < "$DIR/$f") lines)"
+done
+
+# ---- 3) launcher commands ---------------------------------------------------
+# FIX: pehle (a) koi purana "menu" ho to launcher banta hi nahi tha, (b) root ke ilawa user (ubuntu waghera)
+# "menu" likhta to error aata tha. Ab: purani file backup + replace, non-root par khud sudo, TERM / CRLF fix.
+mk_launcher() {   # $1 = path
+    if [[ -e "$1" || -L "$1" ]] && ! grep -q "$MARK" "$1" 2>/dev/null; then
+        mv -f "$1" "$DIR/backup/$(basename "$1").$stamp" 2>/dev/null || rm -f "$1"
+        warn "$1 pehle kisi aur script ka tha - backup: $DIR/backup/$(basename "$1").$stamp"
+    fi
+    cat > "$1" << 'LAUNCH_EOF'
+#!/bin/bash
+# ddkvps-launcher
+M="__RT_MENU__"
+if [[ ! -f "$M" ]]; then
+    for c in /opt/ddkvps/menu.sh /root/menu.sh; do [[ -f "$c" ]] && { M="$c"; break; }; done
+fi
+if [[ ! -f "$M" ]]; then
+    echo "menu.sh nahi mila ($M) - install.sh dobara chalayein."; exit 1
+fi
+[[ -z "${TERM:-}" || "$TERM" == dumb || "$TERM" == unknown ]] && export TERM=xterm
+if [[ $EUID -ne 0 ]]; then
+    command -v sudo >/dev/null 2>&1 && exec sudo TERM="$TERM" bash "$M" "$@"
+    echo "Root chahiye: pehle 'sudo -i' (ya 'su -') chalayein, phir: menu"; exit 1
+fi
+grep -q $'\r' "$M" 2>/dev/null && sed -i 's/\r$//' "$M"   # Windows (CRLF) line-endings wali upload theek
+exec bash "$M" "$@"
+LAUNCH_EOF
+    sed -i "s|__RT_MENU__|$DIR/menu.sh|" "$1"; chmod 755 "$1"
+}
+mk_launcher /usr/local/bin/ddkvps
+mk_launcher /usr/local/bin/menu
+# kisi purani script ka "alias menu=..." naye command ko chhupa deta hai -> hatao (backup ke saath)
+for rc in /root/.bashrc /root/.bash_aliases /root/.profile /root/.bash_profile; do
+    if [[ -f "$rc" ]] && grep -qE '^[[:space:]]*alias[[:space:]]+(menu|ddkvps)=' "$rc"; then
+        cp -a "$rc" "$DIR/backup/$(basename "$rc").$stamp"
+        sed -i -E '/^[[:space:]]*alias[[:space:]]+(menu|ddkvps)=/d' "$rc"
+        warn "$rc se purana 'alias menu' hataya (naye terminal me asar hoga)"
+    fi
+done
+hash -r 2>/dev/null
+ok "command ready: menu  (ya ddkvps) - root na ho to bhi khud sudo se khulega"
+
+# Telegram bot purani menu.sh ki jagah point kar raha ho to naye path par le aao
+if [[ -f /etc/ddkvps/bot.conf ]] && grep -q '^MENU_LIB=' /etc/ddkvps/bot.conf; then
+    sed -i "s|^MENU_LIB=.*|MENU_LIB=$DIR/menu.sh|" /etc/ddkvps/bot.conf
+    warn "Telegram bot ka MENU_LIB $DIR/menu.sh par set hua (bot service restart karni ho to menu se karo)"
+fi
+
+# ---- 4) FRESH VPS: pehle domain, phir sab kuch automatic ---------------------
+AUTO_DONE=0
+if (( FRESH && AUTO )); then
+    hr
+    echo -e "  ${T}${B}DOMAIN${NC}  ${M}A record is VPS ke IP par:${NC} ${W}${NODE_IP}${NC}"
+    echo -e "  ${M}Isi domain par SSL lagega; sab services + web panel isi cert ko use karenge.${NC}"
+    echo
+    while :; do
+        if [[ -z "$DOMAIN" && -r /dev/tty ]]; then
+            read -rp "  ${T}›${NC} " DOMAIN < /dev/tty
+        fi
+        DOMAIN=$(echo "${DOMAIN,,}" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##; s/[[:space:]]//g')
+        [[ -z "$DOMAIN" || "$DOMAIN" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$ ]] && break
+        echo -e "  ${E}✗ domain galat hai${NC} ${M}(misal: vpn.example.com)${NC}"; DOMAIN=""
+        [[ -r /dev/tty ]] || break
+    done
+    if [[ -n "$DOMAIN" ]]; then
+        echo -e "  ${T}→${NC} ${W}${DOMAIN}${NC} ${M}ke saath poora install shuru (10-15 minute, koi sawal nahi)...${NC}"; sleep 1
+        if [[ -r /dev/tty ]]; then RT_NO_PAUSE=1 bash "$DIR/menu.sh" --install-all "$DOMAIN" < /dev/tty
+        else RT_NO_PAUSE=1 bash "$DIR/menu.sh" --install-all "$DOMAIN" < /dev/null; fi
+        AUTO_DONE=1
+    else
+        warn "domain nahi diya - auto install skip. menu me '1) Install All Components' chalao."
+    fi
+fi
+
+# ---- 5) maujooda Xray install ko upgrade -------------------------------------
+# FIX: pehli install me Xray reh gaya ho (SSH stack laga hai, Xray nahi) to ab yahin install hota hai -
+# pehle sirf "menu me Install All chalao" likh kar chhod deta tha.
+if (( ! AUTO_DONE )) && [[ ! -f "$XRAY_CONF" && -f /etc/systemd/system/rt-monitor.service ]]; then
+    echo -e "  ${T}→${NC} SSH stack laga hai lekin Xray nahi ${M}- Xray install ho raha hai...${NC}"
+    if RT_NO_PAUSE=1 bash "$DIR/menu.sh" --install-xray < /dev/null; then ok "Xray install ho gaya"
+    else warn "Xray install me problem (log: /tmp/xray-install.log) - web panel / menu se 'Install All' chalayein"; fi
+fi
+# purane SSH users ka bhi shell band (sirf tunnel) - connected users nahi katte
+if (( ! AUTO_DONE )) && [[ -f /etc/systemd/system/rt-monitor.service ]]; then
+    RT_NO_PAUSE=1 bash "$DIR/menu.sh" --harden < /dev/null 2>&1 | sed 's/^/  /'
+fi
+if (( FIX && ! AUTO_DONE )) && [[ -f "$XRAY_CONF" ]]; then
+    echo -e "  ${T}→${NC} Xray mila: lib upgrade ${M}(fix-xray-sync.sh)${NC}"
+    if MENU="$DIR/menu.sh" bash "$DIR/fix-xray-sync.sh"; then
+        ok "Xray lib upgrade done"
+    else
+        warn "fix-xray-sync.sh me problem aaya (upar ka output dekho)"
+    fi
+elif [[ ! -f "$XRAY_CONF" ]] && (( ! AUTO_DONE )); then
+    warn "Fresh install: ${T}menu${NC} me jaake ${W}01 Install All Components${NC} chalao."
+fi
+# purane install par SSL auto-renew + port-80 conflict fix (renewal hooks) laga do
+if (( ! AUTO_DONE )) && [[ -f /etc/haproxy/haproxy.cfg && -f "$DIR/menu.sh" ]]; then
+    bash "$DIR/menu.sh" --cert-setup 2>&1 | sed 's/^/  /' || warn "cert setup me problem"
+fi
+
+# ---- 6) web panel (rt-web) ----------------------------------------------------
+if (( ! AUTO_DONE )) && [[ -f "$DIR/install-web.sh" && -f "$DIR/rt-web.py" ]]; then
+    if (( WEB )) || [[ -f /etc/systemd/system/rt-web.service ]]; then
+        echo -e "  ${T}→${NC} Web panel install / update"
+        bash "$DIR/install-web.sh" || warn "web panel install me problem (upar dekhein)"
+    else
+        echo -e "  ${M}Browser web panel ke liye:${NC}  ${T}bash $DIR/install-web.sh${NC}"
+    fi
+fi
+
+echo -e "\n  ${TB} READY ${NC}  ${M}Aage kabhi bhi panel kholne ke liye:${NC}  ${T}menu${NC}"
+
+# ---- 7) panel kholo ---------------------------------------------------------
+if (( RUN )) && [[ -z "${RT_NO_RUN:-}" ]]; then
+    if [[ -r /dev/tty ]]; then exec bash "$DIR/menu.sh" < /dev/tty; fi
+fi
+exit 0
