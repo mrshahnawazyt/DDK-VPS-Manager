@@ -63,13 +63,14 @@ show_menu() {
   echo -e "  ${GREEN}[11]${NC} Real-Time Network Speedtest & Benchmark"
   echo -e "  ${GREEN}[12]${NC} Restart All VPN Services (HAProxy, Nginx, Dropbear, Xray)"
   echo -e "  ${GREEN}[13]${NC} Full VPS Backup & Export Configs"
+  echo -e "  ${RED}[99]${NC} Complete Uninstall DDK VPS Manager Suite"
   echo -e "  ${RED}[0]${NC} Exit to Shell"
   echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
 }
 
 while true; do
   show_menu
-  read -p " Select option [0-13]: " choice
+  read -p " Select option [0-13, 99]: " choice
   case "$choice" in
     1)
       systemctl restart ddk-panel
@@ -93,22 +94,54 @@ while true; do
       ;;
     3)
       echo -e "${YELLOW}1) Add SSH User  2) Delete SSH User  3) Show Connected Users${NC}"
-      read -p "Choice: " sub
+      read -p "Choice [1-3]: " sub
       if [ "$sub" == "1" ]; then
-        read -p "Username: " u
-        read -p "Password: " p
-        read -p "Days active: " d
+        read -p "Enter Username: " u
+        read -p "Enter Password: " p
+        read -p "Active Days (e.g. 30): " d
         useradd -M -s /bin/false "$u" 2>/dev/null || true
         echo "$u:$p" | chpasswd
-        echo -e "${GREEN}User $u created successfully! Expire in $d days.${NC}"
+        EXP_DATE=$(date -d "+$d days" +"%Y-%m-%d" 2>/dev/null || echo "in $d days")
+        clear
+        echo -e "${CYAN}${BOLD}"
+        echo "╔═══════════════════════════════════════════════════════════════╗"
+        echo "║            DDK VPS MANAGER - SSH ACCOUNT CREATED              ║"
+        echo "╠═══════════════════════════════════════════════════════════════╣"
+        echo -e "${WHITE}║ Domain / Host   : ${CYAN}$DOMAIN"
+        echo -e "${WHITE}║ Server Public IP: ${GREEN}$IPV4"
+        echo -e "${WHITE}║ Username        : ${WHITE}$u"
+        echo -e "${WHITE}║ Password        : ${YELLOW}$p"
+        echo -e "${WHITE}║ Expire Date     : ${PURPLE}$EXP_DATE ($d Days)"
+        echo -e "${WHITE}║ Concurrent IPs  : ${GREEN}2 Devices Max"
+        echo -e "${CYAN}╠═══════════════════════════════════════════════════════════════╣"
+        echo -e "${YELLOW}║  SUPPORTED WORKING PORTS:"
+        echo -e "${WHITE}║  • OpenSSH Port        : ${GREEN}22"
+        echo -e "${WHITE}║  • Dropbear SSH        : ${GREEN}109, 447"
+        echo -e "${WHITE}║  • WS HTTP (No SSL)    : ${CYAN}80, 8080, 8880, 2082"
+        echo -e "${WHITE}║  • WS TLS (SSL/HTTPS)  : ${CYAN}443, 2083, 2087"
+        echo -e "${WHITE}║  • Xray VLESS Reality  : ${CYAN}8446"
+        echo -e "${WHITE}║  • Xray VMess WS       : ${CYAN}8442, 2082"
+        echo -e "${WHITE}║  • Xray Trojan gRPC    : ${CYAN}8447, 443"
+        echo -e "${CYAN}╠═══════════════════════════════════════════════════════════════╣"
+        echo -e "${YELLOW}║  CLOUDFLARE CDN WEBSOCKET PAYLOAD:"
+        echo -e "${GREEN}║  GET / HTTP/1.1[crlf]Host: $DOMAIN[crlf]Upgrade: websocket[crlf][crlf]"
+        echo -e "${CYAN}╠═══════════════════════════════════════════════════════════════╣"
+        echo -e "${YELLOW}║  HOW TO USE (CLIENT SETUP):"
+        echo -e "${WHITE}║  • HTTP Custom / NapsternetV / NetMod:"
+        echo -e "${WHITE}║    SSH Host: $DOMAIN | Port: 80 or 443 (SSL) | Payload: above"
+        echo -e "${WHITE}║  • OpenSSH / Termius / PuTTY:"
+        echo -e "${WHITE}║    Host: $DOMAIN | Port: 22 | User: $u | Pass: $p"
+        echo -e "${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
       elif [ "$sub" == "2" ]; then
         read -p "Username to delete: " u
         userdel -f "$u" 2>/dev/null || true
-        echo -e "${GREEN}User $u deleted.${NC}"
+        echo -e "${GREEN}User $u deleted successfully.${NC}"
       else
+        echo -e "${CYAN}Currently active system users:${NC}"
         who
       fi
-      read -p "Press Enter to continue..."
+      read -p "Press Enter to return to menu..."
       ;;
     4)
       systemctl status ws-proxy --no-pager
@@ -143,6 +176,15 @@ while true; do
     13)
       bash "$INSTALL_DIR/modules/backup.sh"
       read -p "Press Enter to continue..."
+      ;;
+    99)
+      if [ -f "$INSTALL_DIR/uninstall.sh" ]; then
+        bash "$INSTALL_DIR/uninstall.sh"
+        exit 0
+      else
+        echo -e "${RED}[ERROR] Uninstallation script not found at $INSTALL_DIR/uninstall.sh${NC}"
+        read -p "Press Enter to continue..."
+      fi
       ;;
     0)
       echo -e "${GREEN}Goodbye! Type 'ddk' or 'vps' anytime to reopen.${NC}"

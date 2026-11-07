@@ -205,6 +205,9 @@ download_module "modules/panel-web-service.py" "$INSTALL_DIR/panel/web-service.p
 download_module "modules/bbr.sh" "$INSTALL_DIR/modules/bbr.sh"
 download_module "modules/system-optimizer.sh" "$INSTALL_DIR/modules/system-optimizer.sh"
 download_module "modules/backup.sh" "$INSTALL_DIR/modules/backup.sh"
+download_module "uninstall.sh" "$INSTALL_DIR/uninstall.sh"
+chmod +x "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
+ln -sf "$INSTALL_DIR/uninstall.sh" /usr/local/bin/ddk-uninstall 2>/dev/null || true
 
 # ==============================================================================
 # EXECUTE PROTOCOL INSTALLATION & ACTIVATION
@@ -337,8 +340,8 @@ echo -e "${WHITE} [5] Xray VLESS WS     : ${CYAN}Port 8443, 443${NC}  (Path: /vl
 echo -e "${WHITE} [6] Xray VLESS Reality: ${CYAN}Port 8446${NC}      (Flow: xtls-rprx-vision)"
 echo -e "${WHITE} [7] Xray Trojan WS    : ${CYAN}Port 8445, 443${NC}  (Path: /trojan)"
 echo -e "${WHITE} [8] DDK Web Panel     : ${CYAN}Port 9090${NC}      (8-in-1 Cyber SPA)"
-echo -e "${CYAN}------------------------------------------------------------------------------${NC}"
-echo -e "${GREEN}[✓] To launch terminal menu anytime, type: ${YELLOW}ddk${GREEN} or ${YELLOW}vps${NC}"
+echo -e "${GREEN}[✓] To launch terminal menu anytime, type: ${YELLOW}ddk${GREEN} or ${YELLOW}menu${GREEN} or ${YELLOW}vps${NC}"
+echo -e "${RED}[!] To completely uninstall script, run  : ${YELLOW}ddk-uninstall${NC}"
 echo "=============================================================================="
 echo ""
 sleep 2
